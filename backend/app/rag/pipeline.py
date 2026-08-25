@@ -26,7 +26,7 @@ from app.graph.neo4j_client import Neo4jGraphStore
 from app.schemas.models import CitationChunk, CitationTriple
 from app.services.embeddings import EmbeddingProvider
 from app.services.parent_store import ParentChunkStore
-from app.vectorstore.qdrant_store import QdrantVectorStore
+from app.vectorstore.postgres_store import PostgresVectorStore
 
 GENERATION_PROMPT = """You answer questions using ONLY the context provided below.
 If the context does not contain the answer, say so plainly instead of guessing.
@@ -63,7 +63,7 @@ class GraphRagPipeline:
         self,
         settings: Settings,
         embedding_provider: EmbeddingProvider,
-        vector_store: QdrantVectorStore,
+        vector_store: PostgresVectorStore,
         parent_store: ParentChunkStore,
         graph_store: Neo4jGraphStore,
     ) -> None:
@@ -181,7 +181,7 @@ class GraphRagPipeline:
 
     def answer_stream(
         self, query: str, document_id: str | None = None, top_k: int | None = None
-    ) -> tuple[Iterator[str], list[CitationChunk], list[CitationTriple]]:
+    ) -> tuple[Iterator[str], list[CitationChunk], list[CitationTriple], list[str]]:
         """Runs retrieval/graph steps eagerly (cheap, needed for grounding),
         then streams only the generation step token-by-token for the API layer."""
         state: RagState = {"query": query, "document_id": document_id, "top_k": top_k or self._settings.top_k_vector}
@@ -213,13 +213,18 @@ class GraphRagPipeline:
                 if delta:
                     yield delta
 
-        return token_stream(), state.get("citations", []), state.get("triples", [])
+        return (
+            token_stream(),
+            state.get("citations", []),
+            state.get("triples", []),
+            state.get("linked_node_ids", []),
+        )
 
 
 def build_rag_pipeline(
     settings: Settings,
     embedding_provider: EmbeddingProvider,
-    vector_store: QdrantVectorStore,
+    vector_store: PostgresVectorStore,
     parent_store: ParentChunkStore,
     graph_store: Neo4jGraphStore,
 ) -> GraphRagPipeline:
