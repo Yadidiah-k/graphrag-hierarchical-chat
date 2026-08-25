@@ -90,7 +90,12 @@ def stream_chat(
             "section_title_filter": section_title_filter,
             "content_type_filter": content_type_filter,
         }
-        with requests.post(f"{API_BASE_URL}/api/v1/chat", json=payload, stream=True, timeout=120) as resp:
+        # 240s, not 120s: the agentic pipeline is up to 4 sequential LLM
+        # calls (validate -> grade -> generate -> rationale) plus a possible
+        # bounded retry (extra retrieve+grade round), which can approach
+        # 120s on a free-tier model on its own -- observed a real timeout at
+        # 120s during browser testing on a slow response.
+        with requests.post(f"{API_BASE_URL}/api/v1/chat", json=payload, stream=True, timeout=240) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines(decode_unicode=True):
                 if not line or not line.startswith("data:"):
@@ -107,8 +112,13 @@ def stream_chat(
                     rationale_holder["value"] = event.get("data")
                 elif event_type == "error":
                     yield f"\n\n**Error:** {event.get('data')}"
-                elif event_type == "done":
-                    break
+                # No break on "done" -- the backend sends "rationale" after
+                # it (chat.py needs the full answer text first), so this
+                # loop keeps reading until the server actually closes the
+                # connection. Breaking early here silently discarded every
+                # rationale event; found via real browser testing, since
+                # a raw SSE dump (e.g. curl) doesn't reproduce this
+                # early-exit behavior.
 
     return token_gen(), citations_holder, triples_holder, rationale_holder
 
