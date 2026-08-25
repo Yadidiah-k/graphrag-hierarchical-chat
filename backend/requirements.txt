@@ -1,0 +1,19 @@
+# API
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+
+# Data contracts / settings
+pydantic==2.13.4
+pydantic-settings==2.15.0
+
+# LLM + embeddings
+openai==3.3.1
+
+# Chunking + orchestration
+langchain-text-splitters==1.1.2
+langgraph==1.2.11
+
+# Stores
+neo4j==6.2.0
+qdrant-client==1.19.0
