@@ -1,9 +1,10 @@
 # Improvements checklist
 
 Working notes from a review of the built system against the assignment.
-Priority 1 (agentic pipeline), Priority 2's storage migration and chunker
-enrichment, and a first real-model end-to-end verification are all now done.
-This tracks what's left, ranked by impact vs. effort.
+Priorities 1-3, a first real-model end-to-end verification, and tests/evals/
+tracing/README are all now done. What's left: cross-document entity
+resolution, and the few-shot+CoT vs. DSPy decision (research done, few-shot
+chosen -- see Priority 4).
 
 ## Milestone: real-model verification, 2026-08-25
 
@@ -43,10 +44,12 @@ alone did nothing until it was also added there.
 - Graph nodes: still namespaced per-document -- cross-document entity
   resolution unchanged, see below
 - `query_logs` audit table exists and is written on every completed `/chat`
-  call with real content now confirmed (query, citations, rationale,
-  latency) -- no eval harness or tracing consumes it yet (in progress)
-- Tests, eval harness, LangSmith tracing, and README are in progress (see
-  `docs/superpowers/specs/2026-08-25-tests-evals-tracing-docs-design.md`)
+  call with real content confirmed (query, citations, rationale, latency)
+- 53 passing pytest unit tests (`backend/tests/`), a real eval harness that
+  actually runs against the live stack (`backend/evals/`), LangSmith env
+  vars wired through (unverified against a real account), and a real
+  README -- all implemented in
+  `docs/superpowers/specs/2026-08-25-tests-evals-tracing-docs-design.md`
 
 ## Priority 1 -- biggest grading impact, fixes the "why LangGraph" gap
 
@@ -99,9 +102,8 @@ alone did nothing until it was also added there.
         plus a new `query_logs` audit table that wasn't in the original scope
         but fell out naturally from having one real database now
   - [x] Dropped Qdrant + SQLite entirely from docker-compose and code
-  - [ ] Document the trade-off in the README -- README doesn't exist yet
-        (see "Still outstanding" below), so this is written up in the spec
-        doc and `PROGRESS.md` for now, not yet in a README
+  - [x] Document the trade-off in the README -- now written up in
+        `README.md`'s Trade-offs section (pgvector vs. a dedicated vector DB)
 - [x] **Chunker enrichment** (structure-aware, more metadata/filters) --
       implemented in `docs/superpowers/specs/2026-08-25-chunker-enrichment-design.md`.
       `hierarchical_chunker.py` itself stays unchanged (pure, dependency-free);
@@ -122,33 +124,46 @@ alone did nothing until it was also added there.
 
 ## Priority 3 -- cheap, high signal
 
-- [ ] **LangSmith tracing** -- *in progress*: env var plumbing
-      (`LANGCHAIN_TRACING_V2`/`LANGCHAIN_API_KEY`/`LANGCHAIN_PROJECT`) into
-      `.env.example` and `docker-compose.yml` is underway. LangChain/LangGraph
-      auto-detect these directly, no application code changes needed. Cannot
-      be verified against a real LangSmith account -- none available in this
-      environment; will be documented as wired-but-unverified.
-- [ ] **Eval harness** -- *in progress*: scoped down from "10-20 Q/A pairs +
-      LLM-judge faithfulness" to a small (5-8 question) real, runnable script
-      against the fixture document from VERIFICATION.md, using substring/
-      keyword checks rather than an LLM-judge (more machinery than 5-8 fixed
-      questions need). Retrieval hit-rate and per-stage latency breakdown
-      were not carried into the scoped-down version -- worth adding back if
-      there's time, not blocking.
+- [x] **LangSmith tracing** -- `LANGCHAIN_TRACING_V2`/`LANGCHAIN_API_KEY`/
+      `LANGCHAIN_PROJECT` wired into `.env.example` and `docker-compose.yml`
+      (LangChain/LangGraph auto-detect these, no application code changes).
+      Verified the vars actually reach the container
+      (`docker exec ... env | grep LANGCHAIN`) -- **not verified against a
+      real LangSmith account**, none available in this environment.
+- [x] **Eval harness** -- `backend/evals/run_evals.py`, 8 question/
+      expected-fact pairs, scoped down from "10-20 Q/A + LLM-judge" to
+      substring/keyword matching (more machinery than 8 fixed questions
+      need). **Run for real against the live stack, twice**: found and fixed
+      a real bug (the free-tier model's Unicode narrow-no-break-space
+      output defeating substring matching), then hit OpenRouter's
+      account-wide daily rate limit partway through the second run --
+      documented honestly in `backend/evals/results.md` rather than only
+      keeping a clean run. Retrieval hit-rate and per-stage latency
+      breakdown weren't carried into the scoped-down version -- worth adding
+      back if there's time, not blocking.
 
 ## Priority 4 -- stretch goals
 
 - [ ] **Hand-written few-shot + explicit CoT** in the graph extraction
-      prompt (`app/graph/extraction.py`) -- gets most of the reliability
-      win of DSPy without the extra dependency
+      prompt (`app/graph/extraction.py`) -- **decided, in progress next**.
+      Researched whether an existing labeled dataset (DocRED, REBEL) could
+      bootstrap DSPy few-shot examples instead of hand-writing them: both
+      use a fixed, closed relation taxonomy (Wikidata-style: "spouse",
+      "member of") against our open-ended, LLM-generated relation types
+      (`ACQUIRED`, `PARTNERED_WITH`, ...), and both are Wikipedia-domain
+      rather than business-document domain -- a real schema and style
+      mismatch, not just extra formatting work. That removes the one thing
+      that would have made DSPy worth it here (reusing existing labeled data
+      instead of hand-writing examples), so hand-written few-shot + CoT gets
+      the same starting cost without DSPy's compile-step machinery and
+      dependency. SEC EDGAR filings (10-K/10-Q/8-K) surfaced as a good
+      source of real, public-domain, on-domain test documents to chunk --
+      worth using for eval fixtures regardless of this decision.
 - [ ] **DSPy** (`BootstrapFewShot` or similar) for prompt optimization --
-      legit and resume-relevant, but it's a second orchestration framework
-      with its own compile step that needs labeled examples to bootstrap
-      against. Risk: overlaps with the ReAct rewrite above (two frameworks
-      doing an adjacent job), highest effort/risk-of-half-finished item on
-      this list. Only worth it if there's time left after Priority 1-3, or
-      if having DSPy specifically on the resume matters more than the
-      marginal quality gain.
+      **not pursued this round**, superseded by the decision above. Still
+      legit and resume-relevant on its own terms if there's time later, or
+      if having DSPy specifically on the resume matters independent of the
+      marginal quality gain over hand-written few-shot.
 
 ## Cross-document entity resolution (flagged earlier, not yet prioritized)
 
@@ -160,14 +175,13 @@ alone did nothing until it was also added there.
 
 ## Still outstanding from the base build (see PROGRESS.md)
 
-- [ ] `backend/tests/` -- *in progress*, scoped to pure-logic unit tests
-      (chunker, extraction parsing, the pipeline's structured-output
-      parsing) that need zero external services, per the same scoping
-      decision made earlier in this project
-- [ ] `README.md` (architecture diagram, setup, sample queries, trade-offs)
-      -- *in progress*, being written from content already established in
-      `PROGRESS.md`/this file/the prior spec docs, using the real verified
-      example from `VERIFICATION.md` for sample queries
+- [x] `backend/tests/` -- 53 passing pytest unit tests, scoped to
+      pure-logic modules (chunker, extraction parsing, the pipeline's
+      structured-output parsing) that need zero external services
+- [x] `README.md` (architecture diagram, setup, sample queries, trade-offs)
+      -- written from content already established across `PROGRESS.md`/
+      this file/the prior spec docs, using the real verified example from
+      `VERIFICATION.md` for sample queries, not paraphrased
 - [x] Real end-to-end ingest -> chat test with a valid (OpenRouter) key --
       **done, see the Milestone section above and `VERIFICATION.md`**.
       Proved actual answer quality and rationale accuracy, not just plumbing.
