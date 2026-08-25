@@ -1,5 +1,102 @@
 # Progress (in-progress build, not final)
 
+## Tests, evals, LangSmith tracing, README -- 2026-08-25
+Implements `docs/superpowers/specs/2026-08-25-tests-evals-tracing-docs-design.md`.
+The last four pieces from `IMPROVEMENTS.md`'s "still outstanding" list, none
+of which involved a real architectural decision.
+
+**Tests** (`backend/tests/`, new `pytest==8.3.4` dependency): 53 unit tests
+across three files, all pure/dependency-free (no docker, no API key):
+`test_hierarchical_chunker.py` (parent/child counts and approximate sizing
+on realistic repeated-paragraph text, valid `parent_id` back-references,
+all five existing `ValueError` cases including the previously-untested
+`chunk_overlap_tokens < 0` check), `test_extraction_parsing.py`
+(`GraphExtractor._parse` -- well-formed JSON, malformed JSON,
+missing/invalid `section_title`/`content_type`, and the existing
+dangling-relationship-drop behavior, pinned rather than changed),
+`test_pipeline_parsing.py` (the three static parsers added by the agentic
+pipeline spec -- `_parse_validation`/`_parse_grade`/`_parse_rationale` --
+same malformed/missing-field coverage style). Run:
+```
+cd backend && .venv/bin/python -m pytest tests/ -v
+```
+Result: **53 passed in 1.02s**.
+
+**Eval harness** (`backend/evals/run_evals.py`, `backend/evals/results.md`):
+a small hardcoded script (not a framework, not part of `pytest`, not
+CI-integrated) -- 8 question/expected-fact pairs against the same Acme
+Corp / Startup Inc acquisition document used for today's earlier real-model
+verification (see below), run against the actual live docker-compose stack
+with the real OpenRouter key from `.env`.
+
+Two real runs happened, both worth recording honestly rather than only
+keeping the clean one:
+- **Run 1** (before a whitespace-normalization fix): 3/8 passed by strict
+  substring match, but the failures were a harness bug, not wrong answers
+  -- the model (`minimax/minimax-m2.7:free`) emits Unicode narrow no-break
+  spaces (`U+202F`) between some words/numbers (e.g. `"Acme Corp"`,
+  `"$50 million"`), which defeated plain `in` substring matching on
+  otherwise-correct answers. Fixed by normalizing all whitespace (regex
+  `\s+` -> single space) on both sides of the comparison before
+  re-running.
+- **Run 2** (after the fix): questions 1-2 passed cleanly (34.6s, 35.5s).
+  Question 3 onward hit `openai.RateLimitError: 429`
+  (`limit_source: openrouter_free_tier_daily`, `X-RateLimit-Remaining: 0`)
+  -- OpenRouter's account-wide daily free-tier request cap, exhausted
+  partway through the run. Confirmed this is account-wide, not
+  model-specific: swapped `LLM_MODEL` to
+  `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` (the other model
+  this project previously verified as working) and immediately re-attempted
+  fixture ingestion -- identical `free-models-per-day` error at the
+  extraction call. `LLM_MODEL` was reverted back to
+  `minimax/minimax-m2.7:free` afterward since the swap didn't help.
+  Quota resets daily (`X-RateLimit-Reset` = 2026-08-26 00:00 UTC); a
+  re-run after that reset should complete the full 8/8 this run was on
+  track for -- questions 3, 4, 6, 7, 8 all had the correct fact present
+  verbatim in run 1's raw answer text, just defeated by the same spacing
+  bug run 1 hit, which was already fixed by the time run 2 executed them.
+
+Full per-question tables for both runs are in `backend/evals/results.md`,
+including a hand-added note on the rate-limit run (the script itself only
+records pass/fail/latency, not the HTTP error text, so the note was added
+by hand for anyone reading the file later).
+
+**LangSmith tracing**: `LANGCHAIN_TRACING_V2`/`LANGCHAIN_API_KEY`/
+`LANGCHAIN_PROJECT` added to `.env.example` and `docker-compose.yml`'s
+`api` service `environment` block (same `${VAR:-}` pattern as
+`OPENAI_BASE_URL`). No application code changes -- LangChain/LangGraph
+auto-detect these from the environment. Verified via
+`docker exec graphrag-api-1 env | grep LANGCHAIN` (all three land in the
+container, even as blank placeholders) -- the same check that caught the
+`OPENAI_BASE_URL` env-var bug earlier today, applied proactively this time
+so it isn't repeated. **Not verified against a real LangSmith account** --
+no LangSmith API key was available in this pass; stated explicitly rather
+than claimed.
+
+**README.md**: architecture (mermaid diagrams of the four services and both
+pipelines), setup (`docker compose up`, `.env.example`, the verified
+OpenRouter path), sample queries (the real ingest/chat/gibberish-rejection
+example from `VERIFICATION.md`, copied verbatim rather than paraphrased),
+trade-offs (pgvector vs. dedicated vector DB, bounded retry vs. ReAct,
+per-parent vs. per-child classification, substring-match entity linking vs.
+NER, per-document graph namespacing, no Alembic), and a "what's still open"
+section (cross-document entity resolution, LangSmith unverified, eval
+harness scope, ReAct, DSPy). Every concrete claim in it (service names,
+ports, container name, the sample query/answer/rationale text, the 35.4s
+latency figure, node/relationship counts) was checked against this repo's
+actual current state, not written from memory.
+
+### Deviation: `.env` also got the LangSmith placeholder vars, not just `.env.example`
+The spec's file list only mentions `.env.example` (a committed template),
+but `.env` itself (gitignored, already on disk with the working OpenRouter
+config) needed the same three vars added too, or the
+`docker exec ... env | grep LANGCHAIN` verification step would have
+nothing to check against `docker-compose.yml`'s `${VAR:-}` substitution
+pattern would still produce empty-string env vars in the container either
+way, so this wasn't strictly required for the plumbing to work -- but
+verifying it while blank matches exactly how the `OPENAI_BASE_URL` bug was
+originally caught, so it was done for real rather than assumed.
+
 ## First real-model verification -- 2026-08-25
 
 Every prior verification pass in this file used a fake OpenAI key, so only
@@ -351,10 +448,13 @@ verified at the store level with synthetic metadata -- not through a real
 limitation as every prior pass. Pending a real OpenAI key.
 
 ## Not started yet
-- `frontend/` - chat UI + citations + graph visualizer, plus a `ui` service
-  added to docker-compose once it exists
-- `backend/tests/`
-- `README.md` - architecture, setup, sample queries, trade-offs
+- Cross-document entity resolution (see "Known design trade-offs" below)
+- LangSmith tracing verified against a real account (env vars wired and
+  confirmed reaching the container; no LangSmith API key available in this
+  pass)
+- CI integration for the eval harness (currently a manual/documented step
+  against a live stack, not run automatically)
+- DSPy / hand-written few-shot for the extraction prompt (stretch goal)
 
 ## Known design trade-offs to call out in the README
 - Graph node ids are namespaced per document
