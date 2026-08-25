@@ -1,7 +1,7 @@
 """Neo4j-backed graph store.
 
 Schema:
-    (:Entity {node_id, name, type})
+    (:Entity {node_id, name, type, normalized_name})
     (:Entity)-[:REL {relation_type, evidence}]->(:Entity)
 
 Provenance is stored on both nodes and relationships as `source_child_ids`
@@ -34,6 +34,10 @@ class Neo4jGraphStore:
                 "CREATE CONSTRAINT entity_node_id IF NOT EXISTS "
                 "FOR (e:Entity) REQUIRE e.node_id IS UNIQUE"
             )
+            session.run(
+                "CREATE INDEX entity_normalized_name IF NOT EXISTS "
+                "FOR (e:Entity) ON (e.normalized_name)"
+            )
 
     def write_extraction(self, result: ExtractionResult) -> None:
         with self._driver.session() as session:
@@ -46,6 +50,7 @@ class Neo4jGraphStore:
                 """
                 MERGE (e:Entity {node_id: $node_id})
                 ON CREATE SET e.name = $name, e.type = $type,
+                              e.normalized_name = $normalized_name,
                               e.source_child_ids = $source_child_ids,
                               e.source_parent_ids = $source_parent_ids
                 ON MATCH SET e.source_child_ids = apoc.coll.toSet(
@@ -56,6 +61,7 @@ class Neo4jGraphStore:
                 node_id=node.node_id,
                 name=node.name,
                 type=node.type,
+                normalized_name=node.normalized_name,
                 source_child_ids=node.source_child_ids,
                 source_parent_ids=node.source_parent_ids,
             )
@@ -109,6 +115,47 @@ class Neo4jGraphStore:
                     )
 
         return list(nodes.values()), edges
+
+    def find_candidates_by_normalized_name(self, normalized_names: list[str]) -> dict[str, tuple[str, list[str]]]:
+        """Returns {normalized_name: (existing_node_id, existing_source_parent_ids)}
+        for each name that has an existing match -- at most one match per name.
+        source_parent_ids is returned so the caller can auto-confirm same-document
+        repeats without an LLM call (see EntityResolver.resolve)."""
+        if not normalized_names:
+            return {}
+
+        query = """
+        MATCH (e:Entity)
+        WHERE e.normalized_name IN $normalized_names
+        RETURN e.normalized_name AS normalized_name, e.node_id AS node_id,
+               e.source_parent_ids AS source_parent_ids
+        """
+        candidates: dict[str, tuple[str, list[str]]] = {}
+        with self._driver.session() as session:
+            for record in session.run(query, normalized_names=normalized_names):
+                name = record["normalized_name"]
+                if name in candidates:
+                    continue
+                candidates[name] = (record["node_id"], record["source_parent_ids"] or [])
+        return candidates
+
+    def get_relationship_summary(self, node_id: str, limit: int = 5) -> list[str]:
+        """Up to `limit` relationship triples involving this node, as strings
+        like 'Acme Corp -[HAS_CEO]-> Jane Smith', for LLM confirmation context."""
+        query = """
+        MATCH (e:Entity {node_id: $node_id})-[r:REL]-(other:Entity)
+        RETURN e.name AS name, r.relation_type AS relation_type,
+               other.name AS other_name, startNode(r) = e AS outgoing
+        LIMIT $limit
+        """
+        summaries: list[str] = []
+        with self._driver.session() as session:
+            for record in session.run(query, node_id=node_id, limit=limit):
+                if record["outgoing"]:
+                    summaries.append(f"{record['name']} -[{record['relation_type']}]-> {record['other_name']}")
+                else:
+                    summaries.append(f"{record['other_name']} -[{record['relation_type']}]-> {record['name']}")
+        return summaries
 
     def find_node_ids_by_name_fragment(self, text: str, limit: int = 20) -> list[str]:
         """Cheap entity-linking fallback: match extracted node names that
