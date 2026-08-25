@@ -1,54 +1,78 @@
 # Improvements checklist
 
 Working notes from a review of the built system against the assignment.
-Current build is complete and verified end-to-end (see PROGRESS.md) but is a
-literal, non-differentiated implementation of the spec. This tracks the gaps
-and the discussed upgrades, ranked by impact vs. effort.
+Priority 1's query triage/grading and Priority 2's storage migration are now
+implemented and verified (structurally -- see the real-model caveat in each
+section below). This tracks what's left, ranked by impact vs. effort.
 
-## Current state (for context)
+## Current state (for context, updated 2026-08-25)
 
-- Stores: Qdrant (child chunk vectors) + SQLite (parent chunks) + Neo4j (graph)
-- RAG pipeline: fixed LangGraph straight-line --
-  `retrieve_vector -> expand_parents -> link_entities -> traverse_graph -> generate_answer`
-  (no branching, no conditional edges, fixed `hop_depth`)
-- Entity linking: literal substring match of retrieved text against all node names
-- Graph nodes: namespaced per-document (`f"{document_id}:{entity_name}"`) -- no
-  cross-document entity resolution
-- Chunker: pure character-count recursive splitting, no structure awareness,
-  no metadata beyond `{document_id, parent_id, order, start_char, end_char}`
-- No evals, no tracing/observability, no tests yet
+- Stores: Postgres (pgvector for child chunk vectors, JSONB for parent chunk
+  + query_log metadata) + Neo4j (graph) -- Qdrant and SQLite are gone
+- RAG pipeline: agentic LangGraph with real conditional/cyclic edges --
+  `validate_query` (gibberish short-circuit, history-aware query rewrite) ->
+  `retrieve_vector -> expand_parents -> link_entities -> traverse_graph` ->
+  `grade_context` (bounded widen-and-retry loop back to `retrieve_vector` on
+  insufficient context) -> `generate_answer` -> `generate_rationale`
+- Entity linking: still a literal substring match of retrieved text against
+  all node names -- unchanged, not addressed by either priority yet
+- Graph nodes: still namespaced per-document -- cross-document entity
+  resolution unchanged, see below
+- Chunker: still pure character-count recursive splitting, no structure
+  awareness, no metadata beyond `{document_id, parent_id, order, start_char,
+  end_char}` -- Priority 2's chunker-enrichment sub-item not started
+- `query_logs` audit table exists and is written on every completed `/chat`
+  call, but no eval harness or tracing consumes it yet
+- Still no tests, no README
+- **Caveat that applies to everything below marked done**: all verification
+  so far used a fake OpenAI key. Structural correctness (graph wiring, schema,
+  parsing of malformed LLM output, docker boot) is real-verified; actual model
+  behavior (does it correctly detect gibberish, does grading actually improve
+  answers, is the rationale accurate) is not yet tested against a real model.
 
 ## Priority 1 -- biggest grading impact, fixes the "why LangGraph" gap
 
-- [ ] **Query triage node** before retrieval: cheap LLM (or smaller/faster
-      model) call classifying the incoming query --
-      `is_gibberish`, `is_relevant` (or defer to post-retrieval confidence),
-      `tone`/`sentiment`, `verbosity_preference` (wants a short answer vs. a
-      thorough one).
-  - [ ] Conditional edge: gibberish -> short-circuit with a clarification
-        response, skip retrieval entirely (saves cost + latency)
-  - [ ] Conditional edge: low vector-search confidence -> answer with an
-        explicit "not found in the provided documents" flag instead of
-        hallucinating
-  - [ ] Feed tone/verbosity into the generation prompt to adjust response
-        style/length
+- [x] **Query triage node** before retrieval -- `validate_query` node
+      (structured LLM call): `is_gibberish`, `tone`, `verbosity_preference`,
+      plus a history-aware `rewritten_query` (query rewriting was folded in
+      here, as discussed) and `suggested_reply` for the reject path.
+      Implemented in `docs/superpowers/specs/2026-08-25-agentic-rag-pipeline-design.md`.
+  - [x] Conditional edge: gibberish -> `reject_response` node, skips
+        retrieval entirely (real `add_conditional_edges`, verified via the
+        compiled graph's mermaid output showing genuine branching, not a
+        straight line)
+  - [x] Conditional edge: insufficient context -> handled via `grade_context`
+        (below) rather than a separate pre-retrieval relevance check -- more
+        reliable since it grades against what was *actually* retrieved
+        instead of guessing relevance from the raw query
+  - [x] Feed tone/verbosity into the generation prompt (`_style_instruction`)
+  - [x] **Bonus, discussed alongside this**: conversation history support
+        (`ChatRequest.history`) -- `/chat` was previously stateless
+  - [x] **Bonus**: `grade_context` node + bounded widen-and-retry loop
+        (`top_k` x1.5, `hop_depth` +1, capped at `max_context_retries`) when
+        retrieved context is graded insufficient -- this is the "low
+        confidence" handling called out above, implemented as its own node
+  - [x] **Bonus**: `generate_rationale` node -- explains which chunks/
+        relationships were actually used, populates `query_logs.rationale_text`
 - [ ] **ReAct-style agentic retrieval**: expose `vector_search` and
-      `graph_traverse` as tools the LLM can call in a loop (LangGraph's native
-      pattern), letting it decide whether to search again, traverse deeper, or
-      stop -- instead of a fixed `hop_depth`. This is the fuller version of
-      "prefer agentic framework: LangGraph for multi-hop" from the assignment.
+      `graph_traverse` as tools the LLM can call in a loop, letting it decide
+      whether to search again or stop -- **deliberately not chosen** in favor
+      of the bounded widen-and-retry loop above (predictable cost/latency,
+      explicitly discussed and traded off in the pipeline spec's Non-goals).
+      Still open if you want the fuller agentic version.
 
 ## Priority 2 -- architecture quality, one clean unit of work
 
-- [ ] **Migrate Qdrant + SQLite -> Postgres (pgvector + JSONB)**
-  - [ ] Single Postgres instance: child chunk vectors via pgvector, parent
-        chunks + flexible metadata via JSONB, one schema instead of three
-        stores
-  - [ ] Drop Qdrant + SQLite from docker-compose, update `app/vectorstore/`
-        and `app/services/parent_store.py` accordingly
-  - [ ] Document the trade-off explicitly in the README (pgvector vs. a
-        dedicated vector DB -- fine at this scale, would reconsider at very
-        large corpora)
+- [x] **Migrate Qdrant + SQLite -> Postgres (pgvector + JSONB)** --
+      implemented in `docs/superpowers/specs/2026-08-25-postgres-migration-design.md`
+  - [x] Single Postgres instance: `child_chunks` (pgvector, HNSW index),
+        `parent_chunks` + `documents` (JSONB metadata column, GIN indexed),
+        plus a new `query_logs` audit table that wasn't in the original scope
+        but fell out naturally from having one real database now
+  - [x] Dropped Qdrant + SQLite entirely from docker-compose and code
+  - [ ] Document the trade-off in the README -- README doesn't exist yet
+        (see "Still outstanding" below), so this is written up in the spec
+        doc and `PROGRESS.md` for now, not yet in a README
 - [ ] **Chunker enrichment** (structure-aware, more metadata/filters)
   - [ ] Section/heading detection during chunking, carry `section_title`
         forward as chunk metadata
