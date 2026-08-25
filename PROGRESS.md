@@ -145,6 +145,95 @@ two changes there turned out to be unavoidable:
 - NOT yet tested: an actual ingest -> chat round trip against real
   OpenAI/Qdrant/Neo4j (needs API key + docker-compose).
 
+## Agentic RAG pipeline (query validation, grading, rationale) -- verified 2026-08-25
+Implements `docs/superpowers/specs/2026-08-25-agentic-rag-pipeline-design.md`:
+`app/rag/pipeline.py` is now a real branching/cyclic LangGraph --
+`validate_query` (structured: gibberish/tone/verbosity/history-resolved
+rewritten_query) short-circuits to `reject_response` on gibberish, otherwise
+runs `retrieve_vector -> expand_parents -> link_entities -> traverse_graph
+-> grade_context` (structured sufficiency check), which loops back to
+`retrieve_vector` with widened `top_k`/`hop_depth` up to
+`Settings.max_context_retries` before `generate_answer` (free text) ->
+`generate_rationale` (structured, post-hoc explanation of which
+chunks/relationships were actually used). `/chat` now accepts conversation
+`history` and emits a new `rationale` SSE event after the token stream ends.
+
+Per the spec, `answer()` (non-streaming) drives the fully compiled graph via
+`.invoke()`, including the `add_conditional_edges` branches and the
+`grade_context -> retrieve_vector` retry cycle. `answer_stream()` (what
+`/chat` calls) keeps manually chaining node functions in Python up through
+`grade_context`, with the retry as a plain loop -- same reasoning as the
+existing code's pre-this-spec deviation from `.invoke()` for streaming, no
+new pattern introduced. `generate_rationale` is deliberately not part of
+`answer_stream`'s token generator: it needs the finished answer text, which
+only exists after the caller has drained the stream, so it's a separate
+public method that `chat.py` calls after collecting all tokens, before the
+`query_logs` write.
+
+Verified (smoke-tested, no real OpenAI key -- see limitation below):
+- Every `app.*` module imports cleanly (`app.schemas.models`,
+  `app.core.config`, `app.services.query_log`, `app.api.routes.chat`,
+  `app.rag.pipeline`, `app.main`).
+- `GraphRagPipeline.__init__` constructs the compiled graph without error
+  with mocked stores; `pipeline._app.get_graph().draw_mermaid()` confirms
+  the wiring: `validate_query -.-> reject_response` /
+  `validate_query -.-> retrieve_vector` (gibberish branch) and
+  `grade_context -.-> retrieve_vector` / `grade_context -.-> generate_answer`
+  (the retry cycle) both render as genuine conditional edges, not a
+  straight line.
+- Direct unit tests of `GraphRagPipeline._parse_validation` /
+  `_parse_grade` / `_parse_rationale` against synthetic LLM-shaped JSON --
+  well-formed output, malformed JSON, missing fields, and an invalid
+  `verbosity_preference` literal / out-of-range `relevance_score` all parse
+  to sane fallback values without raising (same technique used previously
+  to validate `graph/extraction.py`'s `_parse`).
+- `ChatRequest`/`ChatMessage`/`ChatStreamEvent` (including a `rationale`
+  event carrying a `Rationale` payload) round-trip through Pydantic
+  correctly.
+- `docker compose up --build` -> postgres, neo4j, api, ui all healthy.
+- `GET /api/v1/health` -> 200 before and after the failed `/chat` call below
+  (server didn't crash or wedge).
+- `POST /api/v1/chat` with a fake `OPENAI_API_KEY` and a populated `history`
+  array -> fails at `validate_query` (the first LLM call) with a real `401`
+  from OpenAI, delivered as a single SSE `error` event, HTTP 200 on the
+  streaming response, connection closes cleanly. Confirmed via `docker
+  compose logs api` that no unhandled traceback reached the server process.
+- Request validation on the new field: an invalid `history[].role` (e.g.
+  `"system"`) correctly 422s before the pipeline is ever invoked; a request
+  with no `history` field at all still works (defaults to `[]`).
+- `query_logs` has 0 rows after the failed call -- confirmed via `psql`
+  directly against the container, matching the spec's "log only completed
+  turns" scope (gibberish/rejected and failed turns don't write a row).
+  `\d query_logs` confirms the `rationale_text` column is still present and
+  nullable.
+- `docker compose down -v` -> clean teardown, no leftover containers/volumes.
+
+### Limitation: nothing past validate_query is behaviorally verified
+This bites harder than the Postgres migration's fake-key limitation: here,
+the *first* pipeline step (`validate_query`) itself needs a real LLM call,
+so with a fake key there is no partial-success signal at all past FastAPI's
+own request validation. **Untested against a real model, pending a real
+OpenAI key**: gibberish detection accuracy, tone/verbosity inference
+quality, the rewritten_query reference-resolution behavior, context
+grading/the widen-and-retry loop actually firing and improving results, and
+rationale quality/accuracy (does `chunks_used`/`relationships_used`
+actually match what the answer drew on). All of this is structurally wired
+and unit-tested at the parsing layer, but "does it work" for the LLM-judgment
+parts of this spec is an open question until it runs against real OpenAI.
+
+### Deviation from the spec's file list
+The spec's "Files touched" list is `rag/pipeline.py`, `schemas/models.py`,
+`core/config.py`, `api/routes/chat.py`, `frontend/app.py`. It doesn't list
+`app/services/query_log.py`, but `QueryLogStore.record()` had no
+`rationale_text` parameter -- the column existed (added by the Postgres
+migration in anticipation of this work) but nothing wrote to it, which is
+exactly the gap this spec exists to close. Added an optional
+`rationale_text: str | None = None` parameter and pass it through to the
+`QueryLog` row; `chat.py` now calls it with `rationale.explanation`. Same
+class of necessary, mechanical, in-scope deviation as the Postgres
+migration's `pipeline.py` extension noted above -- flagging it explicitly
+since it's outside the spec's listed file scope.
+
 ## Not started yet
 - `frontend/` - chat UI + citations + graph visualizer, plus a `ui` service
   added to docker-compose once it exists
