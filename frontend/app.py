@@ -61,7 +61,14 @@ def triples_to_edges(triples: list[dict]) -> list[dict]:
     ]
 
 
-def stream_chat(query: str, document_id: str | None, top_k: int, history: list[dict]):
+def stream_chat(
+    query: str,
+    document_id: str | None,
+    top_k: int,
+    history: list[dict],
+    section_title_filter: str | None = None,
+    content_type_filter: str | None = None,
+):
     """Returns (token_generator, citations_holder, triples_holder, rationale_holder).
 
     citations_holder / triples_holder / rationale_holder are dicts populated
@@ -75,7 +82,14 @@ def stream_chat(query: str, document_id: str | None, top_k: int, history: list[d
     rationale_holder: dict = {}
 
     def token_gen():
-        payload = {"query": query, "document_id": document_id, "top_k": top_k, "history": history}
+        payload = {
+            "query": query,
+            "document_id": document_id,
+            "top_k": top_k,
+            "history": history,
+            "section_title_filter": section_title_filter,
+            "content_type_filter": content_type_filter,
+        }
         with requests.post(f"{API_BASE_URL}/api/v1/chat", json=payload, stream=True, timeout=120) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines(decode_unicode=True):
@@ -174,6 +188,11 @@ def chat_tab() -> None:
 
     document_filter = st.sidebar.text_input("Filter chat by document_id (optional)")
     top_k = st.sidebar.slider("top_k (vector search)", 1, 20, 8)
+    content_type_filter = st.sidebar.selectbox(
+        "Content type filter", options=[None, "prose", "table", "list", "other"],
+        format_func=lambda v: v or "(any)",
+    )
+    section_title_filter = st.sidebar.text_input("Section title filter (optional)")
 
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
@@ -188,7 +207,12 @@ def chat_tab() -> None:
 
         with st.chat_message("assistant"):
             token_gen, citations_holder, triples_holder, rationale_holder = stream_chat(
-                query, document_filter or None, top_k, history
+                query,
+                document_filter or None,
+                top_k,
+                history,
+                section_title_filter or None,
+                content_type_filter,
             )
             answer = st.write_stream(token_gen)
             st.session_state.messages.append({"role": "assistant", "content": answer})
