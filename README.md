@@ -210,14 +210,34 @@ alternative that was considered and set aside:
   of retrieved parent text against all graph node names, not a real
   NER/entity-linking model. Fast and dependency-free, but will both miss
   paraphrased references and occasionally over-match short/common names.
-- **Per-document graph node namespacing -- no cross-document entity
-  resolution.** Graph node ids are `f"{document_id}:{entity_name}"`, so
-  "Acme Corp" mentioned in two different ingested documents becomes two
-  separate graph nodes rather than one shared entity. Each document gets
-  its own subgraph; the knowledge graph doesn't yet merge across
-  documents. Fixing this needs a real entity-resolution step (normalize
-  name + type, maybe embedding-similarity dedup) -- flagged as the
-  clearest "not really done yet" gap in the GraphRAG pitch.
+- **Exact normalized-name candidate matching, not fuzzy/similarity search.**
+  Graph node ids are no longer document-scoped (`app/graph/extraction.py`
+  generates a provisional `{normalized_name}:{random_suffix}` id, and
+  `EntityResolver` (`app/graph/entity_resolution.py`) rewrites it onto an
+  existing node when a normalized-name candidate is found and confirmed),
+  so "Acme Corp" mentioned across two documents now merges into one graph
+  node instead of staying two disconnected subgraphs. Candidate lookup is
+  still exact-match on normalized name, though: "Acme Corp" vs. "Acme
+  Corporation" won't be found as candidates for each other at all -- that
+  needs a similarity-search mechanism (embeddings or fuzzy string
+  matching) that's explicitly out of scope for this pass. Real
+  multi-candidate disambiguation (more than one existing "confirmed
+  different" entity sharing a normalized name) is also out of scope --
+  candidate lookup returns at most one match per name.
+- **LLM confirmation before merging a name match, not merge-on-match.**
+  Two exact-name matches across documents don't auto-merge -- one batched
+  LLM call per parent chunk (not per entity) confirms or denies each
+  ambiguous candidate against `get_relationship_summary()`'s view of what
+  the graph already knows about it, so two different real-world entities
+  that happen to share a name (e.g. two unrelated people both named "John
+  Smith") don't get silently fused. Same-document repeat mentions skip
+  this call entirely (auto-confirmed from `source_parent_ids` already
+  containing an id from this ingestion's `document_id`) -- otherwise
+  ingesting a single document that mentions an entity across multiple
+  parent chunks would newly cost an LLM call per repeat, which the old
+  document-scoped id scheme didn't. On a malformed/missing LLM response,
+  the safe default is `same_as_existing=False`: a missed merge is a
+  smaller problem than a wrongful one.
 - **No Alembic -- idempotent `create_all()` instead.** Schema changes apply
   via `Base.metadata.create_all()` at startup (matching the pre-existing
   lightweight pattern this project already used for SQLite/Neo4j) rather
@@ -302,9 +322,15 @@ here so it doesn't repeat.
 
 ## What's still open
 
-- **Cross-document entity resolution** -- graph nodes are namespaced per
-  document (see Trade-offs above); no merged cross-document knowledge
-  graph yet.
+- **Fuzzy/similarity-based entity matching** -- cross-document resolution
+  (exact-match candidates + LLM confirmation, see Trade-offs above) is
+  implemented, but candidate lookup is exact normalized-name match only.
+  "Acme Corp" vs. "Acme Corporation" still won't be found as candidates
+  for each other; that needs embedding-similarity or fuzzy string
+  matching, not built here. Real-model verification of the LLM
+  confirmation step itself is also still open -- see
+  `docs/superpowers/specs/2026-08-25-cross-document-entity-resolution-design.md`
+  and `PROGRESS.md` for what was and wasn't verified against a live model.
 - **LangSmith tracing** -- wired through env vars, unverified against a
   real LangSmith account (see above).
 - **Eval harness** -- small and hand-built (8 fixed Q/A pairs, substring
