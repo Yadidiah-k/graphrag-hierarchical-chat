@@ -20,12 +20,10 @@ class Settings(BaseSettings):
     neo4j_user: str = Field(default="neo4j")
     neo4j_password: str = Field(default="testpassword")
 
-    # --- Qdrant ---
-    qdrant_url: str = Field(default="http://qdrant:6333")
-    qdrant_collection: str = Field(default="graphrag_chunks")
-
-    # --- Parent chunk store ---
-    parent_store_db_path: str = Field(default="/data/parent_chunks.db")
+    # --- Postgres ---
+    database_url: str = Field(
+        default="postgresql+psycopg://graphrag:graphrag@postgres:5432/graphrag"
+    )
 
     # --- Chunking ---
     parent_chunk_tokens: int = Field(default=1000)

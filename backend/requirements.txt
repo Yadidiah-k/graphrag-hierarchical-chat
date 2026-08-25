@@ -16,4 +16,6 @@ langgraph==1.2.11
 
 # Stores
 neo4j==6.2.0
-qdrant-client==1.19.0
+sqlalchemy==2.0.36
+psycopg[binary]==3.2.3
+pgvector==0.3.6
