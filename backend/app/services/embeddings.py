@@ -24,7 +24,7 @@ class EmbeddingProvider(Protocol):
 
 class OpenAIEmbeddingProvider:
     def __init__(self, settings: Settings) -> None:
-        self._client = OpenAI(api_key=settings.openai_api_key)
+        self._client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
         self._model = settings.embedding_model
         self.dimension = settings.embedding_dimension
 

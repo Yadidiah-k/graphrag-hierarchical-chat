@@ -46,7 +46,7 @@ Text:
 
 class GraphExtractor:
     def __init__(self, settings: Settings) -> None:
-        self._client = OpenAI(api_key=settings.openai_api_key)
+        self._client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
         self._model = settings.llm_model
 
     def extract(self, parent_id: str, document_id: str, child_ids: list[str], text: str) -> ExtractionResult:

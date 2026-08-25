@@ -10,7 +10,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- LLM provider ---
+    # base_url left unset targets api.openai.com; pointing it at an
+    # OpenAI-compatible endpoint (e.g. https://openrouter.ai/api/v1) lets
+    # openai_api_key hold that provider's key instead, with no code changes.
     openai_api_key: str = Field(default="")
+    openai_base_url: str | None = Field(default=None)
     llm_model: str = Field(default="gpt-4o-mini")
     embedding_model: str = Field(default="text-embedding-3-small")
     embedding_dimension: int = Field(default=1536)

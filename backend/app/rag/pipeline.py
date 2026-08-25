@@ -207,7 +207,7 @@ class GraphRagPipeline:
         self._vectors = vector_store
         self._parents = parent_store
         self._graph = graph_store
-        self._llm = OpenAI(api_key=settings.openai_api_key)
+        self._llm = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
         self._app = self._build_graph()
 
     # ------------------------------------------------------------------
