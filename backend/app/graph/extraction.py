@@ -8,6 +8,8 @@ validated against `ExtractionResult` before anything is written to Neo4j.
 from __future__ import annotations
 
 import json
+import re
+import uuid
 
 from openai import OpenAI
 
@@ -119,13 +121,19 @@ class GraphExtractor:
             node_type = str(raw_node.get("type", "Entity")).strip() or "Entity"
             if not name:
                 continue
-            node_id = f"{document_id}:{name.lower().replace(' ', '_')}"
+            normalized_name = re.sub(r"\s+", "_", name.strip().lower())
+            # Provisional id: globally scoped by normalized name rather than
+            # document-scoped, so the same real-world entity mentioned across
+            # documents can be merged. EntityResolver (app/graph/entity_resolution.py)
+            # may rewrite this to an existing node's id before the graph write.
+            node_id = f"{normalized_name}:{uuid.uuid4().hex[:8]}"
             name_to_id[name] = node_id
             nodes.append(
                 GraphNode(
                     node_id=node_id,
                     name=name,
                     type=node_type,
+                    normalized_name=normalized_name,
                     source_child_ids=child_ids,
                     source_parent_ids=[parent_id],
                 )

@@ -49,6 +49,7 @@ class GraphNode(BaseModel):
     node_id: str
     name: str
     type: str
+    normalized_name: str = ""
     source_child_ids: list[str] = Field(default_factory=list)
     source_parent_ids: list[str] = Field(default_factory=list)
 

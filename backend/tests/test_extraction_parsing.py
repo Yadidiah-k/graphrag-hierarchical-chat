@@ -48,10 +48,26 @@ class TestWellFormedJson:
         assert result.section_title == "Executive Summary"
         assert result.content_type == "prose"
 
-    def test_node_id_is_namespaced_by_document_and_lowercased(self) -> None:
+    def test_node_id_is_globally_scoped_by_normalized_name_not_document(self) -> None:
+        """Node ids are no longer document-namespaced (superseded behavior --
+        see the cross-document entity resolution design doc): a provisional
+        id is `{normalized_name}:{random_suffix}`, with no document_id in it
+        at all, so EntityResolver can later rewrite it onto an existing
+        cross-document match by normalized_name alone."""
         raw = json.dumps({"nodes": [{"name": "Acme Corp", "type": "Organization"}], "relationships": []})
         result = _parse(raw)
-        assert result.nodes[0].node_id == "doc-1:acme_corp"
+        node_id = result.nodes[0].node_id
+
+        assert node_id.startswith("acme_corp:")
+        suffix = node_id.split(":", 1)[1]
+        assert len(suffix) == 8
+        assert DOCUMENT_ID not in node_id
+        assert result.nodes[0].normalized_name == "acme_corp"
+
+    def test_normalized_name_collapses_internal_whitespace(self) -> None:
+        raw = json.dumps({"nodes": [{"name": "Acme   Corp Global", "type": "Organization"}], "relationships": []})
+        result = _parse(raw)
+        assert result.nodes[0].normalized_name == "acme_corp_global"
 
     def test_relation_type_uppercased_and_spaces_become_underscores(self) -> None:
         raw = json.dumps(
