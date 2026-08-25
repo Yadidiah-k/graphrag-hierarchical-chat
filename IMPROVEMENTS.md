@@ -1,9 +1,29 @@
 # Improvements checklist
 
 Working notes from a review of the built system against the assignment.
-Priority 1's query triage/grading and Priority 2's storage migration are now
-implemented and verified (structurally -- see the real-model caveat in each
-section below). This tracks what's left, ranked by impact vs. effort.
+Priority 1 (agentic pipeline), Priority 2's storage migration and chunker
+enrichment, and a first real-model end-to-end verification are all now done.
+This tracks what's left, ranked by impact vs. effort.
+
+## Milestone: real-model verification, 2026-08-25
+
+Every verification pass up to this point used a fake OpenAI key, so only
+structural correctness was proven, never actual model behavior. That changed
+today: `OPENAI_BASE_URL` support was added (any OpenAI-compatible endpoint,
+not just OpenAI itself -- no other code changes needed) and pointed at
+OpenRouter with real free-tier models. Full real run: correct chunking,
+correct embeddings, correct entity/relationship extraction (evidence text
+checked against the source document), correct section/content-type
+classification, a correctly-answered chat query with an accurate rationale,
+and correct gibberish rejection (retrieval genuinely skipped, not just a
+rejected-looking answer). See `VERIFICATION.md` for the full reviewable
+test-case writeup and `PROGRESS.md` for the narrative version. This resolves
+the "not yet tested against a real model" caveat that applied to every item
+below marked done -- noted per-item now instead of as a blanket caveat.
+
+Bug found and fixed getting here: `docker-compose.yml`'s `api` service only
+forwards env vars it explicitly lists -- adding `OPENAI_BASE_URL` to `.env`
+alone did nothing until it was also added there.
 
 ## Current state (for context, updated 2026-08-25)
 
@@ -13,22 +33,20 @@ section below). This tracks what's left, ranked by impact vs. effort.
   `validate_query` (gibberish short-circuit, history-aware query rewrite) ->
   `retrieve_vector -> expand_parents -> link_entities -> traverse_graph` ->
   `grade_context` (bounded widen-and-retry loop back to `retrieve_vector` on
-  insufficient context) -> `generate_answer` -> `generate_rationale`
+  insufficient context) -> `generate_answer` -> `generate_rationale` --
+  real-model verified (gibberish rejection + a grounded answer + rationale)
+- Chunker: parent chunks get LLM-classified `section_title`/`content_type`
+  (folded into the existing extraction call), inherited by children,
+  queryable as `/chat` filters -- real-model verified
 - Entity linking: still a literal substring match of retrieved text against
-  all node names -- unchanged, not addressed by either priority yet
+  all node names -- unchanged, not addressed by any priority yet
 - Graph nodes: still namespaced per-document -- cross-document entity
   resolution unchanged, see below
-- Chunker: still pure character-count recursive splitting, no structure
-  awareness, no metadata beyond `{document_id, parent_id, order, start_char,
-  end_char}` -- Priority 2's chunker-enrichment sub-item not started
 - `query_logs` audit table exists and is written on every completed `/chat`
-  call, but no eval harness or tracing consumes it yet
-- Still no tests, no README
-- **Caveat that applies to everything below marked done**: all verification
-  so far used a fake OpenAI key. Structural correctness (graph wiring, schema,
-  parsing of malformed LLM output, docker boot) is real-verified; actual model
-  behavior (does it correctly detect gibberish, does grading actually improve
-  answers, is the rationale accurate) is not yet tested against a real model.
+  call with real content now confirmed (query, citations, rationale,
+  latency) -- no eval harness or tracing consumes it yet (in progress)
+- Tests, eval harness, LangSmith tracing, and README are in progress (see
+  `docs/superpowers/specs/2026-08-25-tests-evals-tracing-docs-design.md`)
 
 ## Priority 1 -- biggest grading impact, fixes the "why LangGraph" gap
 
@@ -40,7 +58,9 @@ section below). This tracks what's left, ranked by impact vs. effort.
   - [x] Conditional edge: gibberish -> `reject_response` node, skips
         retrieval entirely (real `add_conditional_edges`, verified via the
         compiled graph's mermaid output showing genuine branching, not a
-        straight line)
+        straight line; **real-model verified** -- `"asdkjf qwoeiru zzz
+        blorp"` correctly produced empty citations/triples and a friendly
+        clarification response, no `query_logs` row written)
   - [x] Conditional edge: insufficient context -> handled via `grade_context`
         (below) rather than a separate pre-retrieval relevance check -- more
         reliable since it grades against what was *actually* retrieved
@@ -51,9 +71,18 @@ section below). This tracks what's left, ranked by impact vs. effort.
   - [x] **Bonus**: `grade_context` node + bounded widen-and-retry loop
         (`top_k` x1.5, `hop_depth` +1, capped at `max_context_retries`) when
         retrieved context is graded insufficient -- this is the "low
-        confidence" handling called out above, implemented as its own node
+        confidence" handling called out above, implemented as its own node.
+        Grading itself ran for real (correctly judged the small test
+        document sufficient on the first pass), but the retry *branch*
+        specifically wasn't exercised -- the test document never triggered
+        it. Still open to verify with a query that's genuinely
+        under-supported by the ingested content.
   - [x] **Bonus**: `generate_rationale` node -- explains which chunks/
-        relationships were actually used, populates `query_logs.rationale_text`
+        relationships were actually used, populates `query_logs.rationale_text`.
+        **Real-model verified**: asked "Who acquired Startup Inc and how
+        much did it cost?", got the correct answer plus a rationale that
+        correctly cited the actual supporting chunk ids and the actual
+        graph relationship used -- not a generic or fabricated explanation.
 - [ ] **ReAct-style agentic retrieval**: expose `vector_search` and
       `graph_traverse` as tools the LLM can call in a loop, letting it decide
       whether to search again or stop -- **deliberately not chosen** in favor
@@ -73,25 +102,39 @@ section below). This tracks what's left, ranked by impact vs. effort.
   - [ ] Document the trade-off in the README -- README doesn't exist yet
         (see "Still outstanding" below), so this is written up in the spec
         doc and `PROGRESS.md` for now, not yet in a README
-- [ ] **Chunker enrichment** (structure-aware, more metadata/filters)
-  - [ ] Section/heading detection during chunking, carry `section_title`
-        forward as chunk metadata
-  - [ ] Content-type tagging (table vs. list vs. prose) where detectable
-  - [ ] Store this metadata in the new Postgres JSONB column
-  - [ ] Use it as a retrieval filter (filter by section/type, not just
-        `document_id`)
+- [x] **Chunker enrichment** (structure-aware, more metadata/filters) --
+      implemented in `docs/superpowers/specs/2026-08-25-chunker-enrichment-design.md`.
+      `hierarchical_chunker.py` itself stays unchanged (pure, dependency-free);
+      classification folded into the existing per-parent extraction call.
+  - [x] Section/heading detection -- **real-model verified**: the test
+        document's Executive Summary section was correctly classified as
+        `section_title="Executive Summary"`
+  - [x] Content-type tagging -- **real-model verified**: correctly
+        classified as `content_type="prose"`
+  - [x] Stored in the Postgres JSONB `metadata` column (per-parent,
+        inherited by children -- classifying every child individually was a
+        deliberate cost trade-off, not done)
+  - [x] Retrieval filter: `section_title_filter`/`content_type_filter` on
+        `ChatRequest`, threaded through to `search()`'s `WHERE` clause,
+        frontend sidebar controls added. Wired and store-level tested; not
+        yet exercised with a real filtered `/chat` call in manual
+        verification (VERIFICATION.md's real run didn't set a filter)
 
 ## Priority 3 -- cheap, high signal
 
-- [ ] **LangSmith tracing**: near-free given LangChain/LangGraph is already
-      in use -- add `LANGCHAIN_TRACING_V2`, `LANGCHAIN_API_KEY`,
-      `LANGCHAIN_PROJECT` to Settings + `.env.example`, document in README
-- [ ] **Eval harness**: small hand-built set (10-20 Q/A pairs against a
-      sample document)
-  - [ ] Retrieval hit-rate (did the right parent chunk get retrieved?)
-  - [ ] Answer faithfulness via LLM-judge (is the answer grounded in the
-        retrieved context?)
-  - [ ] Latency per stage (retrieval / graph traversal / generation)
+- [ ] **LangSmith tracing** -- *in progress*: env var plumbing
+      (`LANGCHAIN_TRACING_V2`/`LANGCHAIN_API_KEY`/`LANGCHAIN_PROJECT`) into
+      `.env.example` and `docker-compose.yml` is underway. LangChain/LangGraph
+      auto-detect these directly, no application code changes needed. Cannot
+      be verified against a real LangSmith account -- none available in this
+      environment; will be documented as wired-but-unverified.
+- [ ] **Eval harness** -- *in progress*: scoped down from "10-20 Q/A pairs +
+      LLM-judge faithfulness" to a small (5-8 question) real, runnable script
+      against the fixture document from VERIFICATION.md, using substring/
+      keyword checks rather than an LLM-judge (more machinery than 5-8 fixed
+      questions need). Retrieval hit-rate and per-stage latency breakdown
+      were not carried into the scoped-down version -- worth adding back if
+      there's time, not blocking.
 
 ## Priority 4 -- stretch goals
 
@@ -117,8 +160,14 @@ section below). This tracks what's left, ranked by impact vs. effort.
 
 ## Still outstanding from the base build (see PROGRESS.md)
 
-- [ ] `backend/tests/`
+- [ ] `backend/tests/` -- *in progress*, scoped to pure-logic unit tests
+      (chunker, extraction parsing, the pipeline's structured-output
+      parsing) that need zero external services, per the same scoping
+      decision made earlier in this project
 - [ ] `README.md` (architecture diagram, setup, sample queries, trade-offs)
-- [ ] Real end-to-end ingest -> chat test with a valid OpenAI key (only
-      tested with a fake key so far, which proved the plumbing but not
-      answer quality)
+      -- *in progress*, being written from content already established in
+      `PROGRESS.md`/this file/the prior spec docs, using the real verified
+      example from `VERIFICATION.md` for sample queries
+- [x] Real end-to-end ingest -> chat test with a valid (OpenRouter) key --
+      **done, see the Milestone section above and `VERIFICATION.md`**.
+      Proved actual answer quality and rationale accuracy, not just plumbing.
