@@ -116,24 +116,33 @@ class Neo4jGraphStore:
 
         return list(nodes.values()), edges
 
-    def find_candidates_by_normalized_name(self, normalized_names: list[str]) -> dict[str, tuple[str, list[str]]]:
+    def find_candidates_by_similarity(
+        self, normalized_names: list[str], threshold: float
+    ) -> dict[str, tuple[str, list[str]]]:
         """Returns {normalized_name: (existing_node_id, existing_source_parent_ids)}
-        for each name that has an existing match -- at most one match per name.
+        for each name with an existing entity scoring >= threshold on
+        apoc.text.sorensenDiceSimilarity -- at most one (best-scoring) match
+        per name. An exact match scores 1.0, so this subsumes plain
+        normalized-name equality; no separate exact-match code path.
         source_parent_ids is returned so the caller can auto-confirm same-document
         repeats without an LLM call (see EntityResolver.resolve)."""
         if not normalized_names:
             return {}
 
         query = """
+        UNWIND $normalized_names AS target_name
         MATCH (e:Entity)
-        WHERE e.normalized_name IN $normalized_names
-        RETURN e.normalized_name AS normalized_name, e.node_id AS node_id,
-               e.source_parent_ids AS source_parent_ids
+        WITH target_name, e, apoc.text.sorensenDiceSimilarity(e.normalized_name, target_name) AS similarity
+        WHERE similarity >= $threshold
+        WITH target_name, e, similarity
+        ORDER BY similarity DESC
+        WITH target_name, collect(e)[0] AS best_match, collect(similarity)[0] AS best_similarity
+        RETURN target_name, best_match.node_id AS node_id, best_match.source_parent_ids AS source_parent_ids
         """
         candidates: dict[str, tuple[str, list[str]]] = {}
         with self._driver.session() as session:
-            for record in session.run(query, normalized_names=normalized_names):
-                name = record["normalized_name"]
+            for record in session.run(query, normalized_names=normalized_names, threshold=threshold):
+                name = record["target_name"]
                 if name in candidates:
                     continue
                 candidates[name] = (record["node_id"], record["source_parent_ids"] or [])
