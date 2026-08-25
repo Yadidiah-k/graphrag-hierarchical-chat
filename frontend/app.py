@@ -61,19 +61,21 @@ def triples_to_edges(triples: list[dict]) -> list[dict]:
     ]
 
 
-def stream_chat(query: str, document_id: str | None, top_k: int):
-    """Returns (token_generator, citations_holder, triples_holder).
+def stream_chat(query: str, document_id: str | None, top_k: int, history: list[dict]):
+    """Returns (token_generator, citations_holder, triples_holder, rationale_holder).
 
-    citations_holder / triples_holder are dicts populated as a side effect
-    of consuming the generator -- the backend emits both events before the
-    first token, so by the time st.write_stream finishes they hold the
-    final values.
+    citations_holder / triples_holder / rationale_holder are dicts populated
+    as a side effect of consuming the generator -- the backend emits
+    citations/triples before the first token and rationale after the last
+    one, so by the time st.write_stream finishes, citations/triples already
+    hold their final values and rationale fills in right after.
     """
     citations_holder: dict = {}
     triples_holder: dict = {}
+    rationale_holder: dict = {}
 
     def token_gen():
-        payload = {"query": query, "document_id": document_id, "top_k": top_k}
+        payload = {"query": query, "document_id": document_id, "top_k": top_k, "history": history}
         with requests.post(f"{API_BASE_URL}/api/v1/chat", json=payload, stream=True, timeout=120) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines(decode_unicode=True):
@@ -87,12 +89,14 @@ def stream_chat(query: str, document_id: str | None, top_k: int):
                     citations_holder["value"] = event.get("data") or []
                 elif event_type == "triples":
                     triples_holder["value"] = event.get("data") or []
+                elif event_type == "rationale":
+                    rationale_holder["value"] = event.get("data")
                 elif event_type == "error":
                     yield f"\n\n**Error:** {event.get('data')}"
                 elif event_type == "done":
                     break
 
-    return token_gen(), citations_holder, triples_holder
+    return token_gen(), citations_holder, triples_holder, rationale_holder
 
 
 def render_citations(citations: list[dict]) -> None:
@@ -103,6 +107,20 @@ def render_citations(citations: list[dict]) -> None:
     for c in citations:
         with st.expander(f"{c['document_id']} · {c['parent_id']} · score={c['score']:.3f}"):
             st.write(c["text"])
+
+
+def render_rationale(rationale: dict | None) -> None:
+    if not rationale:
+        st.caption("No rationale available for this answer.")
+        return
+    st.markdown("**Why this answer**")
+    st.write(rationale.get("explanation", ""))
+    chunks_used = rationale.get("chunks_used") or []
+    relationships_used = rationale.get("relationships_used") or []
+    if chunks_used:
+        st.caption(f"Chunks used: {', '.join(chunks_used)}")
+    if relationships_used:
+        st.caption(f"Relationships used: {', '.join(relationships_used)}")
 
 
 def ingest_tab_sidebar() -> None:
@@ -151,6 +169,8 @@ def chat_tab() -> None:
         st.session_state.last_citations = []
     if "last_triples" not in st.session_state:
         st.session_state.last_triples = []
+    if "last_rationale" not in st.session_state:
+        st.session_state.last_rationale = None
 
     document_filter = st.sidebar.text_input("Filter chat by document_id (optional)")
     top_k = st.sidebar.slider("top_k (vector search)", 1, 20, 8)
@@ -161,21 +181,24 @@ def chat_tab() -> None:
 
     query = st.chat_input("Ask a question about your ingested documents")
     if query:
+        history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
         st.session_state.messages.append({"role": "user", "content": query})
         with st.chat_message("user"):
             st.markdown(query)
 
         with st.chat_message("assistant"):
-            token_gen, citations_holder, triples_holder = stream_chat(
-                query, document_filter or None, top_k
+            token_gen, citations_holder, triples_holder, rationale_holder = stream_chat(
+                query, document_filter or None, top_k, history
             )
             answer = st.write_stream(token_gen)
             st.session_state.messages.append({"role": "assistant", "content": answer})
             st.session_state.last_citations = citations_holder.get("value", [])
             st.session_state.last_triples = triples_holder.get("value", [])
+            st.session_state.last_rationale = rationale_holder.get("value")
 
     if st.session_state.messages:
         render_citations(st.session_state.last_citations)
+        render_rationale(st.session_state.last_rationale)
         st.markdown("**Graph relationships used for the last answer**")
         render_graph([], triples_to_edges(st.session_state.last_triples))
 
