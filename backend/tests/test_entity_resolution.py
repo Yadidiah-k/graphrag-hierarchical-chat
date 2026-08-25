@@ -3,10 +3,12 @@ monkeypatched LLM confirmation call, so these run without docker, Neo4j, or
 a real API key (a dummy key is enough since the OpenAI client is only ever
 constructed here, never actually called over the network in this file).
 
-Covers the two behaviors the design doc calls out explicitly:
+Covers the behaviors the design docs call out explicitly:
 - same-document repeat mentions auto-confirm without spending an LLM call
 - a malformed/missing LLM response defaults every decision to
   same_as_existing=False (a missed merge, not a wrongful one)
+- a fuzzy (non-exact) name match scoring above threshold is still surfaced
+  as a candidate and routed to confirmation; below threshold, it isn't
 """
 
 from __future__ import annotations
@@ -19,14 +21,29 @@ from app.schemas.models import ExtractionResult, GraphNode, GraphRelationship
 
 
 class FakeGraphStore:
-    """Duck-typed stand-in for Neo4jGraphStore's two EntityResolver-facing methods."""
+    """Duck-typed stand-in for Neo4jGraphStore's two EntityResolver-facing methods.
+
+    candidates maps an incoming normalized_name to (existing_node_id,
+    existing_source_parent_ids, similarity) -- the third element stands in
+    for what apoc.text.sorensenDiceSimilarity would have scored, so tests
+    can simulate a fuzzy (non-exact) match landing above or below threshold
+    without needing real Neo4j/APOC.
+    """
 
     def __init__(self, candidates: dict, relationship_summaries: dict | None = None) -> None:
         self._candidates = candidates
         self._summaries = relationship_summaries or {}
 
-    def find_candidates_by_normalized_name(self, normalized_names: list[str]) -> dict:
-        return {name: self._candidates[name] for name in normalized_names if name in self._candidates}
+    def find_candidates_by_similarity(self, normalized_names: list[str], threshold: float) -> dict:
+        result = {}
+        for name in normalized_names:
+            match = self._candidates.get(name)
+            if match is None:
+                continue
+            node_id, source_parent_ids, similarity = match
+            if similarity >= threshold:
+                result[name] = (node_id, source_parent_ids)
+        return result
 
     def get_relationship_summary(self, node_id: str, limit: int = 5) -> list[str]:
         return self._summaries.get(node_id, [])
@@ -115,7 +132,7 @@ class TestResolveNoCandidates:
 class TestResolveAutoConfirm:
     def test_same_document_repeat_mention_auto_confirms_without_llm_call(self) -> None:
         extraction = _extraction_with_one_node("acme_corp:33334444", "Acme Corp", "acme_corp")
-        candidates = {"acme_corp": ("acme_corp:00001111", ["doc-2:p0:aaaaaaaa"])}
+        candidates = {"acme_corp": ("acme_corp:00001111", ["doc-2:p0:aaaaaaaa"], 1.0)}
         resolver = _resolver(FakeGraphStore(candidates=candidates))
 
         def _fail_if_called(*args, **kwargs):
@@ -148,7 +165,7 @@ class TestResolveAutoConfirm:
             evidence="Acme Corp acquired Startup Inc",
         )
         extraction = ExtractionResult(nodes=[node_a, node_b], relationships=[relationship])
-        candidates = {"acme_corp": ("acme_corp:00001111", ["doc-2:p0:aaaaaaaa"])}
+        candidates = {"acme_corp": ("acme_corp:00001111", ["doc-2:p0:aaaaaaaa"], 1.0)}
         resolver = _resolver(FakeGraphStore(candidates=candidates))
 
         result = resolver.resolve(extraction, document_id="doc-2", parent_text="text")
@@ -162,7 +179,7 @@ class TestResolveAutoConfirm:
 class TestResolveCrossDocumentLlmConfirmation:
     def test_cross_document_candidate_confirmed_same_reuses_existing_id(self) -> None:
         extraction = _extraction_with_one_node("acme_corp:77778888", "Acme Corp", "acme_corp")
-        candidates = {"acme_corp": ("acme_corp:00001111", ["doc-1:p0:aaaaaaaa"])}
+        candidates = {"acme_corp": ("acme_corp:00001111", ["doc-1:p0:aaaaaaaa"], 1.0)}
         resolver = _resolver(FakeGraphStore(candidates=candidates))
         resolver._confirm_via_llm = lambda parent_text, ambiguous: {"Acme Corp": True}  # type: ignore[method-assign]
 
@@ -171,7 +188,7 @@ class TestResolveCrossDocumentLlmConfirmation:
 
     def test_cross_document_candidate_confirmed_different_keeps_new_id(self) -> None:
         extraction = _extraction_with_one_node("john_smith:77778888", "John Smith", "john_smith")
-        candidates = {"john_smith": ("john_smith:00001111", ["doc-1:p0:aaaaaaaa"])}
+        candidates = {"john_smith": ("john_smith:00001111", ["doc-1:p0:aaaaaaaa"], 1.0)}
         resolver = _resolver(FakeGraphStore(candidates=candidates))
         resolver._confirm_via_llm = lambda parent_text, ambiguous: {"John Smith": False}  # type: ignore[method-assign]
 
@@ -183,9 +200,44 @@ class TestResolveCrossDocumentLlmConfirmation:
         returns an empty dict (the malformed-JSON case), a candidate with no
         entry defaults to not-confirmed, so the provisional id survives."""
         extraction = _extraction_with_one_node("acme_corp:99990000", "Acme Corp", "acme_corp")
-        candidates = {"acme_corp": ("acme_corp:00001111", ["doc-1:p0:aaaaaaaa"])}
+        candidates = {"acme_corp": ("acme_corp:00001111", ["doc-1:p0:aaaaaaaa"], 1.0)}
         resolver = _resolver(FakeGraphStore(candidates=candidates))
         resolver._confirm_via_llm = lambda parent_text, ambiguous: EntityResolver._parse_decisions("not json {{{")
 
         result = resolver.resolve(extraction, document_id="doc-2", parent_text="text")
         assert result.nodes[0].node_id == "acme_corp:99990000"
+
+
+class TestResolveFuzzyMatch:
+    def test_fuzzy_match_above_threshold_is_routed_to_llm_confirmation(self) -> None:
+        """'Acme Corporation' (incoming) has no exact normalized-name match, but
+        a fuzzy match against an existing entity scores above the default
+        0.82 threshold (0.85 here is a canned stand-in score for this fake,
+        not a claim about what real apoc.text.sorensenDiceSimilarity('acme_corp',
+        'acme_corporation') actually returns -- see the real Neo4j check for
+        that), so it should surface as a cross-document candidate and go
+        through LLM confirmation like any other -- confirming it gets to a
+        renamed id at all proves the fuzzy candidate wasn't silently dropped."""
+        extraction = _extraction_with_one_node("acme_corporation:77778888", "Acme Corporation", "acme_corporation")
+        candidates = {"acme_corporation": ("acme_corp:00001111", ["doc-1:p0:aaaaaaaa"], 0.85)}
+        resolver = _resolver(FakeGraphStore(candidates=candidates))
+        resolver._confirm_via_llm = lambda parent_text, ambiguous: {"Acme Corporation": True}  # type: ignore[method-assign]
+
+        result = resolver.resolve(extraction, document_id="doc-2", parent_text="Acme Corporation announced earnings.")
+        assert result.nodes[0].node_id == "acme_corp:00001111"
+
+    def test_fuzzy_match_below_threshold_is_not_a_candidate(self) -> None:
+        """A clearly-unrelated pair scoring well below threshold (standing in
+        for e.g. 'Acme Corp' vs. 'Bramblewood Foods') should never reach LLM
+        confirmation at all -- it's not a candidate, full stop."""
+        extraction = _extraction_with_one_node("acme_corp:11113333", "Acme Corp", "acme_corp")
+        candidates = {"acme_corp": ("bramblewood_foods:00002222", ["doc-1:p0:aaaaaaaa"], 0.15)}
+        resolver = _resolver(FakeGraphStore(candidates=candidates))
+
+        def _fail_if_called(*args, **kwargs):
+            raise AssertionError("LLM confirmation should not be called for a below-threshold pair")
+
+        resolver._confirm_via_llm = _fail_if_called  # type: ignore[method-assign]
+
+        result = resolver.resolve(extraction, document_id="doc-2", parent_text="Acme Corp did things.")
+        assert result.nodes[0].node_id == "acme_corp:11113333"

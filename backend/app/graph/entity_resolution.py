@@ -1,4 +1,4 @@
-"""Cross-document entity resolution: exact normalized-name candidate lookup,
+"""Cross-document entity resolution: similarity-based candidate lookup,
 then -- only for genuinely ambiguous cross-document candidates -- a single
 batched LLM confirmation call per parent chunk, so two entities that merely
 share a name (e.g. two unrelated "John Smith"s) aren't silently fused into
@@ -46,6 +46,7 @@ class EntityResolver:
         self._graph = graph_store
         self._client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
         self._model = settings.llm_model
+        self._fuzzy_match_threshold = settings.entity_fuzzy_match_threshold
 
     def resolve(self, extraction: ExtractionResult, document_id: str, parent_text: str) -> ExtractionResult:
         """Rewrites provisional node ids in extraction.nodes/relationships to
@@ -54,7 +55,7 @@ class EntityResolver:
             return extraction
 
         normalized_names = list({node.normalized_name for node in extraction.nodes if node.normalized_name})
-        candidates = self._graph.find_candidates_by_normalized_name(normalized_names)
+        candidates = self._graph.find_candidates_by_similarity(normalized_names, self._fuzzy_match_threshold)
         if not candidates:
             return extraction
 
