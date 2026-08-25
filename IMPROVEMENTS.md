@@ -144,21 +144,27 @@ alone did nothing until it was also added there.
 
 ## Priority 4 -- stretch goals
 
-- [ ] **Hand-written few-shot + explicit CoT** in the graph extraction
-      prompt (`app/graph/extraction.py`) -- **decided, in progress next**.
+- [x] **Hand-written few-shot + explicit CoT** in the graph extraction
+      prompt (`app/graph/extraction.py`) -- implemented in
+      `docs/superpowers/specs/2026-08-25-fewshot-cot-extraction-design.md`.
       Researched whether an existing labeled dataset (DocRED, REBEL) could
       bootstrap DSPy few-shot examples instead of hand-writing them: both
       use a fixed, closed relation taxonomy (Wikidata-style: "spouse",
       "member of") against our open-ended, LLM-generated relation types
       (`ACQUIRED`, `PARTNERED_WITH`, ...), and both are Wikipedia-domain
       rather than business-document domain -- a real schema and style
-      mismatch, not just extra formatting work. That removes the one thing
-      that would have made DSPy worth it here (reusing existing labeled data
-      instead of hand-writing examples), so hand-written few-shot + CoT gets
-      the same starting cost without DSPy's compile-step machinery and
-      dependency. SEC EDGAR filings (10-K/10-Q/8-K) surfaced as a good
-      source of real, public-domain, on-domain test documents to chunk --
-      worth using for eval fixtures regardless of this decision.
+      mismatch, not just extra formatting work. That removed the one thing
+      that would have made DSPy worth it here. `reasoning` field requested
+      first in the same JSON call (no second LLM call), two hand-written
+      in-domain examples (one rich, one deliberately weak-signal to
+      demonstrate restraint against hallucinated entities). **Structurally
+      verified only** (existing test suite passes unchanged, pipeline
+      mechanics confirmed up to the LLM call) -- actual output-quality
+      improvement is unverified, blocked by OpenRouter's account-wide daily
+      rate limit being exhausted from today's earlier testing. Re-verify
+      after the quota resets. SEC EDGAR filings (10-K/10-Q/8-K) surfaced as
+      a good source of real, public-domain, on-domain test documents --
+      not used yet, worth it for future eval fixtures.
 - [ ] **DSPy** (`BootstrapFewShot` or similar) for prompt optimization --
       **not pursued this round**, superseded by the decision above. Still
       legit and resume-relevant on its own terms if there's time later, or
