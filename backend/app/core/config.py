@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     qdrant_url: str = Field(default="http://qdrant:6333")
     qdrant_collection: str = Field(default="graphrag_chunks")
 
+    # --- Parent chunk store ---
+    parent_store_db_path: str = Field(default="/data/parent_chunks.db")
+
     # --- Chunking ---
     parent_chunk_tokens: int = Field(default=1000)
     child_chunk_tokens: int = Field(default=200)

@@ -12,13 +12,12 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from app.core.config import Settings
 from app.schemas.models import ParentChunk
-
-_DB_PATH = Path("/data/parent_chunks.db")
 
 
 class ParentChunkStore:
-    def __init__(self, db_path: Path = _DB_PATH) -> None:
+    def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute(
@@ -73,5 +72,5 @@ class ParentChunkStore:
         }
 
 
-def build_parent_store() -> ParentChunkStore:
-    return ParentChunkStore()
+def build_parent_store(settings: Settings) -> ParentChunkStore:
+    return ParentChunkStore(db_path=Path(settings.parent_store_db_path))
