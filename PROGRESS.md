@@ -22,6 +22,33 @@
 - `app/api/routes/graph.py` - GET /api/v1/graph/subgraph
 - `app/main.py` - FastAPI app factory + lifespan wiring all clients onto
   app.state
+- `backend/Dockerfile`
+- `docker-compose.yml` (api, neo4j+apoc, qdrant) - `docker compose up` brings
+  up the full backend stack
+- `.env.example` - documents required env vars
+
+## Verified against the live docker-compose stack (real Neo4j + Qdrant, fake OpenAI key)
+- `docker compose up` -> all three services healthy, api boots cleanly.
+- `GET /api/v1/health` -> 200.
+- `GET /api/v1/graph/subgraph?query=...` -> real Neo4j+APOC N-hop traversal,
+  200 with empty nodes/edges (no data ingested yet).
+- `POST /api/v1/ingest` -> real chunking runs, background job correctly goes
+  `queued -> failed` with an actual `401` from OpenAI (fake test key) --
+  proves the async job flow and error handling, not just wiring.
+- NOT yet tested: a real ingest -> chat round trip with a valid OpenAI key
+  (needed to verify embeddings, LLM extraction, and generation actually
+  produce sane output).
+
+## Bugs found and fixed by actually running the stack
+- `ParentChunkStore` had `/data/parent_chunks.db` hardcoded, which only
+  exists inside the container -- broke on bare-host smoke tests. Now reads
+  `Settings.parent_store_db_path`.
+- Qdrant's official image has no `wget`/`curl`, so a `wget`-based
+  healthcheck always failed silently -- would have wedged `api` behind a
+  dependency that could never report healthy. Switched to a bash
+  `/dev/tcp` check.
+- `qdrant-client` 1.19.0 warned about incompatibility with
+  `qdrant/qdrant:v1.12.4`; bumped the server image to `v1.19.0` to match.
 
 ## Verified (smoke-tested, no live services required)
 - Every `app.*` module imports cleanly.
@@ -35,11 +62,8 @@
   OpenAI/Qdrant/Neo4j (needs API key + docker-compose).
 
 ## Not started yet
-- `backend/Dockerfile`
-- `docker-compose.yml` (api, ui, neo4j, qdrant) - Neo4j needs
-  `NEO4J_PLUGINS=["apoc"]`, since `neo4j_client.py` uses
-  `apoc.path.subgraphAll` / `apoc.coll.toSet`
-- `frontend/` - chat UI + citations + graph visualizer
+- `frontend/` - chat UI + citations + graph visualizer, plus a `ui` service
+  added to docker-compose once it exists
 - `backend/tests/`
 - `README.md` - architecture, setup, sample queries, trade-offs
 
