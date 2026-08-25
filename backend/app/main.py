@@ -17,6 +17,7 @@ from app.api.routes import chat, graph, health, ingest
 from app.chunking.hierarchical_chunker import HierarchicalChunker
 from app.core.config import get_settings
 from app.db.session import build_engine, init_db
+from app.graph.entity_resolution import build_entity_resolver
 from app.graph.extraction import build_graph_extractor
 from app.graph.neo4j_client import build_graph_store
 from app.rag.pipeline import build_rag_pipeline
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     query_log_store = build_query_log_store(settings)
     graph_extractor = build_graph_extractor(settings)
     graph_store = build_graph_store(settings)
+    entity_resolver = build_entity_resolver(graph_store, settings)
     chunker = HierarchicalChunker(
         parent_chunk_tokens=settings.parent_chunk_tokens,
         child_chunk_tokens=settings.child_chunk_tokens,
@@ -57,6 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         parent_store=parent_store,
         graph_extractor=graph_extractor,
         graph_store=graph_store,
+        entity_resolver=entity_resolver,
     )
     app.state.rag_pipeline = build_rag_pipeline(
         settings, embedding_provider, vector_store, parent_store, graph_store

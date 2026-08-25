@@ -10,6 +10,8 @@ Flow:
     -> EmbeddingProvider.embed_texts   (child chunk vectors)
     -> PostgresVectorStore.upsert_children
     -> GraphExtractor.extract (per parent, using its child ids as provenance)
+    -> EntityResolver.resolve (rewrite provisional node ids onto existing
+       cross-document matches, where confirmed)
     -> Neo4jGraphStore.write_extraction
     -> ParentChunkStore.update_metadata / PostgresVectorStore.update_children_metadata
 
@@ -24,6 +26,7 @@ from __future__ import annotations
 import logging
 
 from app.chunking.hierarchical_chunker import HierarchicalChunker
+from app.graph.entity_resolution import EntityResolver
 from app.graph.extraction import GraphExtractor
 from app.graph.neo4j_client import Neo4jGraphStore
 from app.schemas.models import ExtractionResult, IngestResponse, IngestJobStatus
@@ -43,6 +46,7 @@ class IngestionService:
         parent_store: ParentChunkStore,
         graph_extractor: GraphExtractor,
         graph_store: Neo4jGraphStore,
+        entity_resolver: EntityResolver,
     ) -> None:
         self._chunker = chunker
         self._embeddings = embedding_provider
@@ -50,6 +54,7 @@ class IngestionService:
         self._parents = parent_store
         self._extractor = graph_extractor
         self._graph = graph_store
+        self._resolver = entity_resolver
 
     def ingest(self, document_id: str, title: str, text: str) -> IngestResponse:
         self._parents.save_document(document_id, title)
@@ -100,6 +105,7 @@ class IngestionService:
                 child_ids=child_ids,
                 text=parent.text,
             )
+            extraction = self._resolver.resolve(extraction, document_id, parent.text)
             if extraction.nodes:
                 self._graph.write_extraction(extraction)
                 total_nodes += len(extraction.nodes)
