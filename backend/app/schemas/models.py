@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -64,6 +65,31 @@ class ExtractionResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Agentic RAG pipeline (query validation, context grading, rationale)
+# ---------------------------------------------------------------------------
+
+
+class QueryValidation(BaseModel):
+    is_gibberish: bool
+    tone: str
+    verbosity_preference: Literal["brief", "detailed"]
+    rewritten_query: str
+    suggested_reply: str | None = None
+
+
+class ContextGrade(BaseModel):
+    is_sufficient: bool
+    relevance_score: float
+    missing_info: str | None = None
+
+
+class Rationale(BaseModel):
+    explanation: str
+    chunks_used: list[str] = Field(default_factory=list)
+    relationships_used: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Ingestion API
 # ---------------------------------------------------------------------------
 
@@ -95,10 +121,16 @@ class IngestResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class ChatRequest(BaseModel):
     query: str
     document_id: str | None = None
     top_k: int | None = None
+    history: list[ChatMessage] = Field(default_factory=list)
 
 
 class CitationChunk(BaseModel):
@@ -119,13 +151,14 @@ class ChatEventType(str, Enum):
     token = "token"
     citations = "citations"
     triples = "triples"
+    rationale = "rationale"
     done = "done"
     error = "error"
 
 
 class ChatStreamEvent(BaseModel):
     type: ChatEventType
-    data: str | list[CitationChunk] | list[CitationTriple] | None = None
+    data: str | list[CitationChunk] | list[CitationTriple] | Rationale | None = None
 
 
 # ---------------------------------------------------------------------------

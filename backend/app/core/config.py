@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     top_k_vector: int = Field(default=8)
     graph_hop_depth: int = Field(default=2)
 
+    # --- Agentic retry (bounded widen-and-retry on insufficient context) ---
+    max_context_retries: int = Field(default=1)
+    retry_top_k_multiplier: float = Field(default=1.5)
+    retry_hop_depth_increment: int = Field(default=1)
+
     # --- App ---
     environment: str = Field(default="local")
     log_level: str = Field(default="INFO")
