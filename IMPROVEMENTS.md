@@ -10,6 +10,15 @@ against real APOC (see `PROGRESS.md`'s "Fuzzy/similarity-based entity
 matching" section) -- a good example of why "verify against the real
 thing" keeps mattering even this late in the project.
 
+**Frontend, real browser tested** (2026-08-25, see `PROGRESS.md`): found
+and fixed a real bug that no prior curl/API-level verification pass could
+have caught -- the frontend silently discarded every "rationale" event
+the backend sent, since its SSE consumer exited on "done" before
+"rationale" (which arrives after it). Confirmed working via an actual
+browser reload post-fix. Also confirmed: ingest, chat, citations, the
+Pyvis graph rendering as a real visualization, gibberish rejection, and
+the Graph Explorer tab all work correctly end to end.
+
 ## Milestone: real-model verification, 2026-08-25
 
 Every verification pass up to this point used a fake OpenAI key, so only
