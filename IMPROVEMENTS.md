@@ -1,10 +1,13 @@
 # Improvements checklist
 
 Working notes from a review of the built system against the assignment.
-Priorities 1-3, a first real-model end-to-end verification, and tests/evals/
-tracing/README are all now done. What's left: cross-document entity
-resolution, and the few-shot+CoT vs. DSPy decision (research done, few-shot
-chosen -- see Priority 4).
+Priorities 1-3, a first real-model end-to-end verification, tests/evals/
+tracing/README, and cross-document entity resolution are all now done.
+What's left: real-model verification of the entity resolution LLM
+confirmation step (blocked by OpenRouter's rate limit, see `PROGRESS.md`),
+fuzzy/similarity-based candidate matching (deliberately out of scope, see
+`README.md`), and the few-shot+CoT vs. DSPy decision (research done,
+few-shot chosen -- see Priority 4).
 
 ## Milestone: real-model verification, 2026-08-25
 
@@ -41,8 +44,11 @@ alone did nothing until it was also added there.
   queryable as `/chat` filters -- real-model verified
 - Entity linking: still a literal substring match of retrieved text against
   all node names -- unchanged, not addressed by any priority yet
-- Graph nodes: still namespaced per-document -- cross-document entity
-  resolution unchanged, see below
+- Graph nodes: no longer namespaced per-document -- cross-document entity
+  resolution (exact normalized-name candidates + LLM confirmation) is
+  implemented, store-level verified against real Neo4j; real-model
+  verification of the LLM confirmation call itself is still blocked by
+  the OpenRouter rate limit, see below
 - `query_logs` audit table exists and is written on every completed `/chat`
   call with real content confirmed (query, citations, rationale, latency)
 - 53 passing pytest unit tests (`backend/tests/`), a real eval harness that
@@ -171,13 +177,24 @@ alone did nothing until it was also added there.
       if having DSPy specifically on the resume matters independent of the
       marginal quality gain over hand-written few-shot.
 
-## Cross-document entity resolution (flagged earlier, not yet prioritized)
+## Cross-document entity resolution
 
-- [ ] Graph node ids are currently namespaced per document, so "Acme Corp"
-      in doc A and doc B become two separate nodes -- the knowledge graph
-      never actually connects across documents, which undercuts the core
-      GraphRAG pitch. Needs a real entity-resolution step (normalize name +
-      type, maybe embedding-similarity dedup) before this is fixed.
+- [x] Graph node ids are no longer namespaced per document. Implemented in
+      `docs/superpowers/specs/2026-08-25-cross-document-entity-resolution-design.md`:
+      `GraphExtractor._parse` now generates a provisional
+      `{normalized_name}:{random_suffix}` id; `EntityResolver`
+      (`app/graph/entity_resolution.py`) looks up existing normalized-name
+      candidates in Neo4j and, for genuinely cross-document candidates,
+      confirms or denies each one via a single batched LLM call per parent
+      chunk before rewriting the provisional id onto the existing match.
+      Same-document repeat mentions auto-confirm without spending an LLM
+      call. Store-level verified against real Neo4j (merge case, no-merge
+      case, and same-document auto-confirm, all confirmed via direct Cypher
+      queries) -- real-model verification of the LLM confirmation call
+      itself is blocked by OpenRouter's rate limit, see `PROGRESS.md`.
+      Deliberately out of scope: fuzzy/similarity-based candidate search
+      (exact normalized-name match only) and multi-candidate disambiguation
+      -- see `README.md`'s trade-offs section.
 
 ## Still outstanding from the base build (see PROGRESS.md)
 
