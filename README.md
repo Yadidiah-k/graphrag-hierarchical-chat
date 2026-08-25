@@ -324,13 +324,13 @@ here so it doesn't repeat.
 
 - **Fuzzy/similarity-based entity matching** -- cross-document resolution
   (exact-match candidates + LLM confirmation, see Trade-offs above) is
-  implemented, but candidate lookup is exact normalized-name match only.
-  "Acme Corp" vs. "Acme Corporation" still won't be found as candidates
-  for each other; that needs embedding-similarity or fuzzy string
-  matching, not built here. Real-model verification of the LLM
-  confirmation step itself is also still open -- see
-  `docs/superpowers/specs/2026-08-25-cross-document-entity-resolution-design.md`
-  and `PROGRESS.md` for what was and wasn't verified against a live model.
+  implemented and real-model verified both directions (a genuine
+  cross-document match merges correctly; two different people sharing a
+  name correctly stay separate -- see `PROGRESS.md`'s "Real-model
+  re-verification" section). Candidate lookup is still exact
+  normalized-name match only, though: "Acme Corp" vs. "Acme Corporation"
+  won't be found as candidates for each other; that needs
+  embedding-similarity or fuzzy string matching, not built here.
 - **LangSmith tracing** -- wired through env vars, unverified against a
   real LangSmith account (see above).
 - **Eval harness** -- small and hand-built (8 fixed Q/A pairs, substring
@@ -339,6 +339,7 @@ here so it doesn't repeat.
 - **ReAct-style agentic retrieval** -- deliberately not chosen in favor of
   the bounded widen-and-retry loop (see Trade-offs above); still open if a
   fuller agentic version is wanted.
-- **DSPy / hand-written few-shot** for the extraction prompt -- stretch
-  goal, not started; would improve extraction reliability without a full
-  ReAct rewrite.
+- **DSPy** for the extraction prompt -- not pursued; hand-written few-shot
+  + CoT was chosen instead and is implemented and real-model verified (see
+  Trade-offs above and `IMPROVEMENTS.md` Priority 4 for the research
+  behind that decision).

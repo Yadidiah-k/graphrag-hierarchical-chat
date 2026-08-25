@@ -2,12 +2,11 @@
 
 Working notes from a review of the built system against the assignment.
 Priorities 1-3, a first real-model end-to-end verification, tests/evals/
-tracing/README, and cross-document entity resolution are all now done.
-What's left: real-model verification of the entity resolution LLM
-confirmation step (blocked by OpenRouter's rate limit, see `PROGRESS.md`),
-fuzzy/similarity-based candidate matching (deliberately out of scope, see
-`README.md`), and the few-shot+CoT vs. DSPy decision (research done,
-few-shot chosen -- see Priority 4).
+tracing/README, and cross-document entity resolution are all now done and
+**fully real-model verified** (a second OpenRouter key resolved the two
+gaps left by the first key's exhausted quota -- see `PROGRESS.md`'s
+"Real-model re-verification" section). What's left: fuzzy/similarity-based
+candidate matching (deliberately out of scope, see `README.md`).
 
 ## Milestone: real-model verification, 2026-08-25
 
@@ -46,9 +45,11 @@ alone did nothing until it was also added there.
   all node names -- unchanged, not addressed by any priority yet
 - Graph nodes: no longer namespaced per-document -- cross-document entity
   resolution (exact normalized-name candidates + LLM confirmation) is
-  implemented, store-level verified against real Neo4j; real-model
-  verification of the LLM confirmation call itself is still blocked by
-  the OpenRouter rate limit, see below
+  implemented and **real-model verified both directions**: a genuinely
+  cross-document same-entity mention ("Silverline Capital" in two separate
+  documents) correctly merged into one node with provenance from both;
+  two different real people sharing a name ("Marcus Reed" in two unrelated
+  documents) correctly stayed as separate nodes. See `PROGRESS.md`.
 - `query_logs` audit table exists and is written on every completed `/chat`
   call with real content confirmed (query, citations, rationale, latency)
 - 53 passing pytest unit tests (`backend/tests/`), a real eval harness that
@@ -163,14 +164,16 @@ alone did nothing until it was also added there.
       that would have made DSPy worth it here. `reasoning` field requested
       first in the same JSON call (no second LLM call), two hand-written
       in-domain examples (one rich, one deliberately weak-signal to
-      demonstrate restraint against hallucinated entities). **Structurally
-      verified only** (existing test suite passes unchanged, pipeline
-      mechanics confirmed up to the LLM call) -- actual output-quality
-      improvement is unverified, blocked by OpenRouter's account-wide daily
-      rate limit being exhausted from today's earlier testing. Re-verify
-      after the quota resets. SEC EDGAR filings (10-K/10-Q/8-K) surfaced as
-      a good source of real, public-domain, on-domain test documents --
-      not used yet, worth it for future eval fixtures.
+      demonstrate restraint against hallucinated entities). **Real-model
+      verified**: a real ingest (a passage mentioning "a renewable energy
+      startup" without naming it) correctly produced 0 relationships rather
+      than inventing a node for the unnamed startup -- the exact restraint
+      behavior the weak-signal example was written to teach, observed for
+      real rather than only unit-tested against synthetic JSON. See
+      `PROGRESS.md`'s "Real-model re-verification" section. SEC EDGAR
+      filings (10-K/10-Q/8-K) surfaced as a good source of real,
+      public-domain, on-domain test documents -- not used yet, worth it for
+      future eval fixtures.
 - [ ] **DSPy** (`BootstrapFewShot` or similar) for prompt optimization --
       **not pursued this round**, superseded by the decision above. Still
       legit and resume-relevant on its own terms if there's time later, or
@@ -190,11 +193,16 @@ alone did nothing until it was also added there.
       Same-document repeat mentions auto-confirm without spending an LLM
       call. Store-level verified against real Neo4j (merge case, no-merge
       case, and same-document auto-confirm, all confirmed via direct Cypher
-      queries) -- real-model verification of the LLM confirmation call
-      itself is blocked by OpenRouter's rate limit, see `PROGRESS.md`.
-      Deliberately out of scope: fuzzy/similarity-based candidate search
-      (exact normalized-name match only) and multi-candidate disambiguation
-      -- see `README.md`'s trade-offs section.
+      queries) -- **and real-model verified both directions of the LLM
+      confirmation call itself**: two documents genuinely mentioning the
+      same "Silverline Capital" correctly merged into one node with
+      provenance from both; two documents each mentioning an unrelated
+      "Marcus Reed" correctly stayed as two separate nodes. See
+      `PROGRESS.md`'s "Real-model re-verification" section for the exact
+      Cypher queries and results. Deliberately out of scope: fuzzy/
+      similarity-based candidate search (exact normalized-name match only)
+      and multi-candidate disambiguation -- see `README.md`'s trade-offs
+      section.
 
 ## Still outstanding from the base build (see PROGRESS.md)
 

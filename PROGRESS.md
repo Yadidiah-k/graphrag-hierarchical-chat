@@ -1,5 +1,51 @@
 # Progress (in-progress build, not final)
 
+## Real-model re-verification with a secondary OpenRouter key -- 2026-08-25
+
+Both real-model gaps left open by the previous two entries below (few-shot/
+CoT extraction quality, entity resolution's LLM confirmation step) were
+blocked by the primary OpenRouter key's exhausted daily quota. A second
+key was made available; used sparingly (10 LLM calls total across four
+short documents) rather than a full re-run, specifically targeting only
+what was actually unverified.
+
+**Entity resolution -- both directions of the LLM confirmation now proven
+against a real model, not a mock:**
+- Ingested `real-key2-doc-a` ("Silverline Capital... completed its
+  acquisition of Bramblewood Foods... Managing Partner Derek Chen") then,
+  separately, `real-key2-doc-b` ("Silverline Capital announced a fifteen
+  million dollar investment..."). Direct Cypher query afterward:
+  ```
+  MATCH (e:Entity) WHERE e.normalized_name = 'silverline_capital'
+  RETURN e.node_id, e.name, e.source_parent_ids
+  ```
+  → **exactly one node**, `source_parent_ids` containing parent chunk ids
+  from *both* documents. Since these are genuinely different documents,
+  this could not have been the same-document auto-confirm path -- the LLM
+  confirmation call had to actually run and correctly judge them the same
+  real-world entity. `docker logs` showed no errors during the run.
+- Ingested `real-key2-doc-c` ("TransGlobal Shipping named Marcus Reed as
+  its new CFO...") and `real-key2-doc-d` ("The city council appointed
+  Marcus Reed to lead the downtown revitalization committee... a local
+  architect...") -- two different people who happen to share a name, by
+  design. Same query for `marcus_reed` afterward → **two separate nodes**,
+  each with provenance from only its own document. This is the actual
+  motivation for choosing LLM confirmation over blind exact-match merging
+  (option 1 alone would have wrongly fused these) -- now confirmed working
+  against a real model, not just asserted in the design doc.
+
+**Few-shot/CoT restraint -- confirmed incidentally, not just by design**:
+`real-key2-doc-b`'s text mentions "a renewable energy startup" without
+naming it. The extractor correctly returned 0 relationships for that
+document rather than inventing a node for the unnamed startup -- exactly
+the restraint behavior the weak-signal few-shot example was written to
+teach, now observed for real rather than only unit-tested against
+synthetic JSON.
+
+Stack torn down (`docker compose down -v`) after these four ingests --
+kept the real-model verification budget small and targeted rather than
+re-running the full original test suite against the new key.
+
 ## Cross-document entity resolution -- 2026-08-25
 
 Implements `docs/superpowers/specs/2026-08-25-cross-document-entity-resolution-design.md`.
