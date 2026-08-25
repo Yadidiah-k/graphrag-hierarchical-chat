@@ -263,11 +263,13 @@ trade-off this architecture makes explicit rather than hiding.
 
 ## Tests and evals
 
-**Unit tests** (`backend/tests/`, real `pytest`, zero external
-dependencies -- no docker, no API key):
+**Unit tests** (`tests/`, real `pytest`, zero external dependencies -- no
+docker, no API key). Run from the repo root -- `pytest.ini`'s
+`pythonpath = backend` makes `app.*` importable without a manual
+`PYTHONPATH`:
 
 ```bash
-cd backend && pip install -r requirements.txt && pytest tests/
+pip install -r backend/requirements.txt && pytest
 ```
 
 Covers the hierarchical chunker (parent/child counts and sizing, valid

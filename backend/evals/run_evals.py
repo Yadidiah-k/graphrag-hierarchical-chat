@@ -1,6 +1,6 @@
 """Small, real eval harness for the /chat endpoint -- not a framework.
 
-This is a manual, documented step, NOT part of `pytest backend/tests/`: it
+This is a manual, documented step, NOT part of the `pytest` suite: it
 requires a live docker-compose stack (`docker compose up`) and a working
 `OPENAI_API_KEY` (real OpenAI, or an OpenAI-compatible endpoint via
 `OPENAI_BASE_URL`, e.g. OpenRouter -- see `.env.example`). Run it with:

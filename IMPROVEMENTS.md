@@ -63,8 +63,10 @@ alone did nothing until it was also added there.
   documents) correctly stayed as separate nodes. See `PROGRESS.md`.
 - `query_logs` audit table exists and is written on every completed `/chat`
   call with real content confirmed (query, citations, rationale, latency)
-- 53 passing pytest unit tests (`backend/tests/`), a real eval harness that
-  actually runs against the live stack (`backend/evals/`), LangSmith env
+- 70 passing pytest unit tests (`tests/` at repo root, moved from
+  `backend/tests/` to match the assignment's expected layout -- `pytest.ini`
+  makes `app.*` importable via `pythonpath = backend`), a real eval harness
+  that actually runs against the live stack (`backend/evals/`), LangSmith env
   vars wired through (unverified against a real account), and a real
   README -- all implemented in
   `docs/superpowers/specs/2026-08-25-tests-evals-tracing-docs-design.md`
