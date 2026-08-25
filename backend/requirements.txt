@@ -19,3 +19,6 @@ neo4j==6.2.0
 sqlalchemy==2.0.36
 psycopg[binary]==3.2.3
 pgvector==0.3.6
+
+# Tests
+pytest==8.3.4
