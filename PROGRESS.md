@@ -1,5 +1,49 @@
 # Progress (in-progress build, not final)
 
+## First real-model verification -- 2026-08-25
+
+Every prior verification pass in this file used a fake OpenAI key, so only
+structural correctness (imports, schema, graceful failure) was proven, never
+actual model behavior. That changed today: `OPENAI_BASE_URL` support was
+added (OpenAI's SDK against any OpenAI-compatible endpoint, no other code
+changes needed) and pointed at OpenRouter with real free-tier models
+(`minimax/minimax-m2.7:free` for chat, `openai/text-embedding-3-small` for
+embeddings, which happens to return exactly 1536 dimensions -- matches the
+existing schema, no migration needed).
+
+**Bug found and fixed getting here**: `docker-compose.yml`'s `api` service
+only passes through env vars explicitly listed in its `environment:` block
+-- adding `OPENAI_BASE_URL` to `.env` alone did nothing until it was also
+added there. First attempt's error (`openai.AuthenticationError`, with
+OpenAI's own client-side error text) was the tell: the request never left
+for OpenRouter at all.
+
+**Real end-to-end result** (`docker compose up`, real ingest, real chat,
+against a 3-paragraph test document):
+- Ingest: 1 parent chunk, 2 child chunks, 8 entities, 9 relationships --
+  all real, all correct (verified the extracted relationships' evidence
+  text against the source document, e.g. `(Acme Corp)-[ACQUIRED]->
+  (Startup Inc)` with evidence "Acme Corp acquired Startup Inc in March
+  2024 for $50 million", an exact match).
+- Chunker enrichment classified correctly: `section_title="Executive
+  Summary"`, `content_type="prose"`.
+- Chat query "Who acquired Startup Inc and how much did it cost?" ->
+  correct answer ("Acme Corp acquired Startup Inc for $50 million."),
+  correct rationale citing the specific parent chunks and the specific
+  graph relationship actually used, `query_logs` row written with
+  `rationale_text` populated, latency 35.4s (4 sequential LLM calls on a
+  free-tier model -- real data point for the README's cost/latency
+  trade-off discussion once that's written).
+- Gibberish input ("asdkjf qwoeiru zzz blorp") -> correctly short-circuited
+  before any retrieval (empty citations/triples), friendly clarification
+  response, no `query_logs` row written (matches "log only completed
+  turns").
+
+This is the first genuine proof the whole system -- chunking, embedding,
+graph extraction, chunker classification, query validation, retrieval,
+context grading, generation, and rationale -- works correctly together,
+not just in isolation with mocks.
+
 ## Done
 - `requirements.txt` - pinned backend dependencies (fastapi, langgraph, neo4j,
   sqlalchemy, psycopg, pgvector, ...)
