@@ -42,7 +42,12 @@ def render_graph(nodes: list[dict], edges: list[dict], height: str = "480px") ->
             net.add_node(node["id"], label=node["label"], title=node.get("type", ""))
             seen.add(node["id"])
 
-    net.repulsion(node_distance=160, spring_length=120)
+    net.repulsion(node_distance=200, spring_length=150)
+    # Multiple relationships between the same pair of nodes (common --
+    # e.g. a person both leading and being CEO-since a company) otherwise
+    # draw as coincident straight lines with fully overlapping labels;
+    # dynamic smoothing curves them apart so each label is legible.
+    net.set_edge_smooth("dynamic")
     html = net.generate_html(notebook=False)
     st.components.v1.html(html, height=int(height.replace("px", "")) + 20, scrolling=True)
 
