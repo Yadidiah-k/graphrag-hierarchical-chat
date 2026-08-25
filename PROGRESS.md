@@ -1,5 +1,101 @@
 # Progress (in-progress build, not final)
 
+## Cross-document entity resolution -- 2026-08-25
+
+Implements `docs/superpowers/specs/2026-08-25-cross-document-entity-resolution-design.md`.
+`IMPROVEMENTS.md`'s last open item: graph node ids were namespaced per
+document (`f"{document_id}:{name}"`), so "Acme Corp" in two different
+ingested documents became two disconnected Neo4j nodes.
+
+`GraphExtractor._parse` (`app/graph/extraction.py`) now generates a
+provisional, globally-scoped id (`{normalized_name}:{uuid4().hex[:8]}`, no
+`document_id` in it) and a new `GraphNode.normalized_name` field
+(`app/schemas/models.py`). `document_id` is still passed into
+`extract`/`_parse` even though unused for id generation now -- kept rather
+than removed, since it avoids signature churn and the same `document_id`
+is already needed one line later in `ingestion.py`'s loop for the resolver
+call (the spec left this as an explicit implementer's-call point).
+
+New `app/graph/entity_resolution.py`: `EntityResolver.resolve()`, called
+once per parent chunk between `extract()` and `write_extraction()`
+(wired in `app/services/ingestion.py`, constructed in `app/main.py`).
+Batch-looks-up normalized names via a new `Neo4jGraphStore` method,
+`find_candidates_by_normalized_name` (backed by a new
+`entity_normalized_name` index). For each candidate: if the existing
+entity's `source_parent_ids` already contains an id from *this* ingestion's
+`document_id`, auto-confirms without an LLM call (a same-document repeat
+mention -- the old scheme already merged this for free, and re-confirming
+it would newly cost an LLM call per repeat mention within a single
+document, which it didn't before). Otherwise it's a genuinely
+cross-document candidate: one batched LLM call per parent chunk (all
+ambiguous candidates together), giving the model the new mention's
+`parent_text` plus a new `get_relationship_summary()` method's view of
+what's already known about each existing candidate. Structured output,
+same `response_format=json_object` + manual-parse pattern as everywhere
+else in this codebase; a malformed/missing `same_as_existing` defaults to
+`False` -- a missed merge is a smaller problem than a wrongful one
+(mirrors `_parse_grade`'s style in `app/rag/pipeline.py`). Confirmed
+matches get their provisional `node_id` rewritten in place to the existing
+node's id (nodes are not dropped -- they still need to reach `MERGE` so
+their provenance accumulates), and any relationship referencing a renamed
+id is rewritten too.
+
+**Verified**:
+```
+cd backend && .venv/bin/python -m pytest tests/ -v
+```
+**68 passed** (up from 53) -- includes the rewritten
+`test_extraction_parsing.py::test_node_id_is_namespaced_by_document_and_lowercased`
+(renamed `test_node_id_is_globally_scoped_by_normalized_name_not_document`,
+now asserting the new scheme instead of pinning the old one) and a new
+`tests/test_entity_resolution.py` (`EntityResolver._parse_decisions`
+malformed/missing-field coverage, plus `resolve()` logic against a fake
+graph store covering no-candidate, same-document auto-confirm, and both
+LLM-confirmed cross-document outcomes -- all pure logic, no LLM call, no
+docker).
+
+Store-level verification against **real Neo4j** (docker, `neo4j` service
+only -- `EntityResolver` never touches Postgres): constructed
+`ExtractionResult`s with the same entity name under different
+`document_id`s, monkeypatched `EntityResolver._confirm_via_llm` to avoid a
+real OpenAI/OpenRouter call, and confirmed via direct Cypher queries
+against the running container:
+- Cross-document match, LLM confirms same -> **one** merged node, with
+  `source_parent_ids` containing both documents' parent ids, and the
+  pre-existing `IS_CEO_OF` relationship still correctly pointing at the
+  merged node.
+- Cross-document match, LLM denies same (two different "John Smith"s) ->
+  **two** separate nodes, each keeping its own provenance.
+- Same-document repeat mention (two parent chunks of one document both
+  mentioning "Meridian Logistics") -> auto-confirmed, **one** merged node,
+  `EntityResolver._confirm_via_llm` monkeypatched to raise if called at all
+  (it wasn't).
+
+All three cases passed. `docker compose down -v` afterward to tear down
+the container brought up for this.
+
+**Not verified this pass**: a real end-to-end two-document ingest through
+the live API (verification plan item 3), which needs a real LLM call for
+the confirmation step. OpenRouter's account-wide daily free-tier quota
+(exhausted earlier today, see the few-shot/CoT entry below) had not yet
+reset when this ran: reset time recorded as `X-RateLimit-Reset` =
+2026-08-26 00:00 UTC; this ran at 2026-08-25 16:07 UTC, about 8 hours
+before reset. Rather than burn a call confirming what was already known to
+be exhausted, this was skipped and store-level verification (which needs
+no LLM call) was relied on instead -- the same honest gap-flagging pattern
+the few-shot/CoT pass used when it hit the same wall. A re-run after the
+quota resets should confirm the real LLM confirmation call actually fires
+and produces a connected cross-document graph, which is still unverified
+against real model behavior (only its parsing/fallback logic and the
+graph-write mechanics around it are).
+
+Also updated `README.md` (trade-offs section: replaced the old
+"per-document namespacing" gap with the new exact-match + LLM-confirmation
+description and the fuzzy-matching non-goal; "What's still open" section
+updated accordingly) and `IMPROVEMENTS.md` (checklist item marked done,
+same caveats noted) to keep the written record in sync with what's
+actually implemented and what's still genuinely open.
+
 ## Few-shot + CoT graph extraction -- 2026-08-25
 
 Implements `docs/superpowers/specs/2026-08-25-fewshot-cot-extraction-design.md`.
