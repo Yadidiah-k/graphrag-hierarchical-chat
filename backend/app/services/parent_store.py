@@ -9,7 +9,7 @@ now, previously a standalone SQLite file.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -57,6 +57,12 @@ class ParentChunkStore:
                 "chunk_order": stmt.excluded.chunk_order,
             },
         )
+        with self._session_factory() as session:
+            session.execute(stmt)
+            session.commit()
+
+    def update_metadata(self, parent_id: str, metadata: dict) -> None:
+        stmt = update(ParentChunkORM).where(ParentChunkORM.parent_id == parent_id).values(metadata_=metadata)
         with self._session_factory() as session:
             session.execute(stmt)
             session.commit()

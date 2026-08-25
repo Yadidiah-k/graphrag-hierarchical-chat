@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -82,6 +83,14 @@ class PostgresVectorStore:
             session.execute(stmt)
             session.commit()
 
+    def update_children_metadata(self, child_ids: list[str], metadata: dict) -> None:
+        if not child_ids:
+            return
+        stmt = update(ChildChunkORM).where(ChildChunkORM.child_id.in_(child_ids)).values(metadata_=metadata)
+        with self._session_factory() as session:
+            session.execute(stmt)
+            session.commit()
+
     def get_children_by_ids(self, child_ids: list[str]) -> dict[str, dict]:
         if not child_ids:
             return {}
@@ -106,12 +115,18 @@ class PostgresVectorStore:
         query_vector: list[float],
         top_k: int = 8,
         document_id: str | None = None,
+        section_title: str | None = None,
+        content_type: str | None = None,
     ) -> list[VectorHit]:
         with self._session_factory() as session:
             distance = ChildChunkORM.embedding.cosine_distance(query_vector)
             query = session.query(ChildChunkORM, distance.label("distance"))
             if document_id:
                 query = query.filter(ChildChunkORM.document_id == document_id)
+            if section_title:
+                query = query.filter(ChildChunkORM.metadata_["section_title"].astext == section_title)
+            if content_type:
+                query = query.filter(ChildChunkORM.metadata_["content_type"].astext == content_type)
             rows = query.order_by(distance).limit(top_k).all()
             return [
                 VectorHit(
