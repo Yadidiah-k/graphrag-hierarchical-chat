@@ -33,6 +33,7 @@ class QueryLogStore:
         graph_triples: list[CitationTriple],
         answer_text: str,
         latency_ms: int,
+        rationale_text: str | None = None,
     ) -> None:
         row = QueryLog(
             id=str(uuid.uuid4()),
@@ -43,6 +44,7 @@ class QueryLogStore:
             linked_node_ids=list(linked_node_ids),
             graph_triples=[t.model_dump() for t in graph_triples],
             answer_text=answer_text,
+            rationale_text=rationale_text,
             latency_ms=latency_ms,
         )
         with self._session_factory() as session:

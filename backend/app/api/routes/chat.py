@@ -4,9 +4,12 @@ The RAG pipeline's retrieval/graph steps and its token generator are all
 synchronous (blocking network calls under the hood). To keep the event
 loop free for other requests, the blocking steps run in a thread
 (asyncio.to_thread) and the token generator is bridged into an async
-iterator via Starlette's iterate_in_threadpool. Every successful call is
-recorded to query_logs once the stream finishes, latency measured around
-the whole request with time.perf_counter().
+iterator via Starlette's iterate_in_threadpool. generate_rationale runs
+after the token stream is fully consumed (it needs the complete answer
+text) and is skipped, along with the query_logs write, when the query was
+rejected as gibberish -- matching the existing "log only completed turns"
+scope. Latency is measured around the whole request with
+time.perf_counter().
 """
 
 from __future__ import annotations
@@ -43,16 +46,25 @@ async def chat(
     async def event_source() -> AsyncIterator[str]:
         started_at = time.perf_counter()
         try:
-            token_iter, citations, triples, linked_node_ids = await asyncio.to_thread(
-                pipeline.answer_stream, payload.query, payload.document_id, payload.top_k
+            result = await asyncio.to_thread(
+                pipeline.answer_stream, payload.query, payload.document_id, payload.top_k, payload.history
             )
-            yield _sse(ChatStreamEvent(type=ChatEventType.citations, data=citations))
-            yield _sse(ChatStreamEvent(type=ChatEventType.triples, data=triples))
+            yield _sse(ChatStreamEvent(type=ChatEventType.citations, data=result.citations))
+            yield _sse(ChatStreamEvent(type=ChatEventType.triples, data=result.triples))
             answer_parts: list[str] = []
-            async for token in iterate_in_threadpool(token_iter):
+            async for token in iterate_in_threadpool(result.token_iter):
                 answer_parts.append(token)
                 yield _sse(ChatStreamEvent(type=ChatEventType.token, data=token))
             yield _sse(ChatStreamEvent(type=ChatEventType.done, data=None))
+
+            if result.is_gibberish:
+                return
+
+            answer_text = "".join(answer_parts)
+            rationale = await asyncio.to_thread(
+                pipeline.generate_rationale, result.rewritten_query, answer_text, result.citations, result.triples
+            )
+            yield _sse(ChatStreamEvent(type=ChatEventType.rationale, data=rationale))
 
             latency_ms = int((time.perf_counter() - started_at) * 1000)
             await asyncio.to_thread(
@@ -60,10 +72,11 @@ async def chat(
                 query_text=payload.query,
                 document_id_filter=payload.document_id,
                 top_k=payload.top_k or settings.top_k_vector,
-                citations=citations,
-                linked_node_ids=linked_node_ids,
-                graph_triples=triples,
-                answer_text="".join(answer_parts),
+                citations=result.citations,
+                linked_node_ids=result.linked_node_ids,
+                graph_triples=result.triples,
+                answer_text=answer_text,
+                rationale_text=rationale.explanation,
                 latency_ms=latency_ms,
             )
         except Exception as exc:
