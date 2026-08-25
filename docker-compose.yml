@@ -43,6 +43,9 @@ services:
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-testpassword}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-graphrag}:${POSTGRES_PASSWORD:-graphrag}@postgres:5432/${POSTGRES_DB:-graphrag}
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-}
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
+      LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-}
     ports:
       - "8000:8000"
     depends_on:
