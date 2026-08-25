@@ -234,6 +234,78 @@ class of necessary, mechanical, in-scope deviation as the Postgres
 migration's `pipeline.py` extension noted above -- flagging it explicitly
 since it's outside the spec's listed file scope.
 
+## Chunker enrichment: section/content-type classification + retrieval filters -- verified 2026-08-25
+Implements `docs/superpowers/specs/2026-08-25-chunker-enrichment-design.md`:
+`GraphExtractor.extract()`'s existing per-parent LLM call now also returns
+`section_title`/`content_type` (`prose`/`table`/`list`/`other`), folded into
+the same JSON response rather than a second call. `ingestion.py` keeps its
+existing order (`save_document -> chunk -> save_many -> embed+upsert ->
+loop parents: extract -> write_graph`) unchanged and backfills the
+classification via `ParentChunkStore.update_metadata` /
+`PostgresVectorStore.update_children_metadata` (`UPDATE ... WHERE`, not part
+of the initial `INSERT`) right after each parent's `extract()` call inside
+the existing loop -- so an extraction failure still leaves chunks and
+vectors durably saved, same partial-success semantics as before this spec.
+`PostgresVectorStore.search()` gained optional `section_title`/
+`content_type` JSONB-`astext` filters, threaded through `RagState` ->
+`answer()`/`answer_stream()` -> `/chat`'s `ChatRequest.section_title_filter`
+/`content_type_filter` -> the Streamlit sidebar (content-type selectbox +
+section-title text input, chat tab only).
+
+Verified (bypassing OpenAI where required, same fake-key constraint as every
+prior pass):
+- Every `app.*` module imports cleanly (`app.schemas.models`,
+  `app.graph.extraction`, `app.services.parent_store`,
+  `app.vectorstore.postgres_store`, `app.services.ingestion`,
+  `app.rag.pipeline`, `app.api.routes.chat`, `app.db.models`, `app.main`).
+- Direct unit tests of `GraphExtractor._parse` against synthetic JSON: 7
+  cases (well-formed table/list/prose, missing fields entirely, an invalid
+  `content_type` literal, an explicit `null` section_title, an empty-string
+  section_title, mixed-case `content_type`, and totally malformed JSON) --
+  all parse to the correct value or the documented defaults
+  (`section_title=None`, `content_type="prose"`) without raising.
+- Direct store-level test against a real local Postgres
+  (`pgvector/pgvector:pg16`, docker), bypassing OpenAI entirely: saved 2
+  parents + 4 children, called `update_metadata`/`update_children_metadata`
+  with synthetic classification dicts, confirmed the exact JSONB landed via
+  raw `psycopg` SQL (not the ORM), then called `search()` with
+  `content_type`/`section_title` filters set individually, combined, mismatched
+  (0 results), and omitted entirely (all 4 rows come back) -- every case
+  returned exactly the expected child_id set, and `document_id` filtering
+  still composes correctly alongside the new filters.
+- `docker compose up -d --build` -> postgres, neo4j, api, ui all healthy.
+- `POST /api/v1/ingest` with a fake key -> still fails at the *embedding*
+  call (`ingestion.py:71`, `openai.AuthenticationError: 401`), same failure
+  point as every prior pass -- confirmed via `docker compose logs api`
+  (single traceback, at `embed_texts`, nothing past it). Confirmed via
+  direct SQL that the one `parent_chunks` row that did land has
+  `metadata = '{}'` (the column default) and `child_chunks` has 0 rows for
+  that document -- proves the backfill code is correctly never reached on
+  this path, exactly as the spec predicted.
+- `GET /api/v1/graph/subgraph?query=...` -> 200, `{"nodes":[],"edges":[]}`,
+  unaffected by this change.
+- `GET /api/v1/health` -> 200 before and after the failed `/ingest` and
+  `/chat` calls.
+- `POST /api/v1/chat` with `section_title_filter`/`content_type_filter` set
+  -> request validates (no 422), fails at `validate_query`'s LLM call with
+  the same real 401, delivered as a single SSE `error` event -- proves the
+  new fields are wired through `ChatRequest` -> `answer_stream()` without
+  breaking the existing request path. A request with an invalid
+  `content_type_filter` literal (e.g. `"spreadsheet"`) correctly 422s before
+  the pipeline is ever invoked.
+- `docker compose down -v` -> clean teardown, no leftover containers or
+  volumes.
+
+### Limitation: classification quality and the real ingest -> chat round trip are untested
+Same class of gap as every prior pass's fake-key limitation, worth stating
+plainly rather than letting the store-level pass stand in for it:
+classification accuracy/quality (does the LLM actually pick a sensible
+`section_title`, does `content_type` match the passage) is untested against
+a real model, and the metadata backfill + filtered search above are only
+verified at the store level with synthetic metadata -- not through a real
+`/ingest` -> `/chat` round trip, which is blocked by the same fake-key
+limitation as every prior pass. Pending a real OpenAI key.
+
 ## Not started yet
 - `frontend/` - chat UI + citations + graph visualizer, plus a `ui` service
   added to docker-compose once it exists
@@ -249,3 +321,9 @@ since it's outside the spec's listed file scope.
 - Entity linking at query time (`find_node_ids_by_name_fragment`) is a
   cheap substring match over all node names, not real NER/linking --
   called out in the code as a take-home shortcut.
+- `section_title`/`content_type` classification happens once per parent
+  chunk (~1000 tokens) and is inherited by all of that parent's children,
+  rather than classifying every child individually. Children outnumber
+  parents roughly 5:1 in the chunker's default sizing, so per-child
+  classification would be ~5x the LLM calls at ingestion time for marginal
+  precision gain -- a deliberate cost/latency trade-off, not an oversight.
