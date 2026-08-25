@@ -20,6 +20,7 @@ class ParentChunk(BaseModel):
     start_char: int
     end_char: int
     order: int
+    metadata: dict = Field(default_factory=dict)
 
 
 class ChildChunk(BaseModel):
@@ -30,6 +31,7 @@ class ChildChunk(BaseModel):
     start_char: int
     end_char: int
     order: int
+    metadata: dict = Field(default_factory=dict)
 
 
 class HierarchicalChunkResult(BaseModel):
@@ -62,6 +64,8 @@ class GraphRelationship(BaseModel):
 class ExtractionResult(BaseModel):
     nodes: list[GraphNode]
     relationships: list[GraphRelationship]
+    section_title: str | None = None
+    content_type: Literal["prose", "table", "list", "other"] = "prose"
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +135,8 @@ class ChatRequest(BaseModel):
     document_id: str | None = None
     top_k: int | None = None
     history: list[ChatMessage] = Field(default_factory=list)
+    section_title_filter: str | None = None
+    content_type_filter: Literal["prose", "table", "list", "other"] | None = None
 
 
 class CitationChunk(BaseModel):
