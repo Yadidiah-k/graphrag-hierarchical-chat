@@ -2,11 +2,13 @@
 
 Working notes from a review of the built system against the assignment.
 Priorities 1-3, a first real-model end-to-end verification, tests/evals/
-tracing/README, and cross-document entity resolution are all now done and
-**fully real-model verified** (a second OpenRouter key resolved the two
-gaps left by the first key's exhausted quota -- see `PROGRESS.md`'s
-"Real-model re-verification" section). What's left: fuzzy/similarity-based
-candidate matching (deliberately out of scope, see `README.md`).
+tracing/README, cross-document entity resolution, and fuzzy/similarity
+candidate matching are all now done -- every item originally on this list
+is implemented. Fuzzy matching's default threshold was corrected from an
+untested 0.82 guess to an empirically-verified 0.65 after checking it
+against real APOC (see `PROGRESS.md`'s "Fuzzy/similarity-based entity
+matching" section) -- a good example of why "verify against the real
+thing" keeps mattering even this late in the project.
 
 ## Milestone: real-model verification, 2026-08-25
 

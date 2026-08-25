@@ -210,20 +210,26 @@ alternative that was considered and set aside:
   of retrieved parent text against all graph node names, not a real
   NER/entity-linking model. Fast and dependency-free, but will both miss
   paraphrased references and occasionally over-match short/common names.
-- **Exact normalized-name candidate matching, not fuzzy/similarity search.**
-  Graph node ids are no longer document-scoped (`app/graph/extraction.py`
-  generates a provisional `{normalized_name}:{random_suffix}` id, and
-  `EntityResolver` (`app/graph/entity_resolution.py`) rewrites it onto an
-  existing node when a normalized-name candidate is found and confirmed),
-  so "Acme Corp" mentioned across two documents now merges into one graph
-  node instead of staying two disconnected subgraphs. Candidate lookup is
-  still exact-match on normalized name, though: "Acme Corp" vs. "Acme
-  Corporation" won't be found as candidates for each other at all -- that
-  needs a similarity-search mechanism (embeddings or fuzzy string
-  matching) that's explicitly out of scope for this pass. Real
-  multi-candidate disambiguation (more than one existing "confirmed
-  different" entity sharing a normalized name) is also out of scope --
-  candidate lookup returns at most one match per name.
+- **Similarity-based candidate matching (APOC Dice similarity), not
+  embeddings.** Graph node ids are no longer document-scoped
+  (`app/graph/extraction.py` generates a provisional
+  `{normalized_name}:{random_suffix}` id, and `EntityResolver`
+  (`app/graph/entity_resolution.py`) rewrites it onto an existing node when
+  a candidate is found and confirmed), so "Acme Corp" mentioned across two
+  documents now merges into one graph node instead of staying two
+  disconnected subgraphs. Candidate lookup uses
+  `apoc.text.sorensenDiceSimilarity` (already-enabled APOC, no new
+  embedding infrastructure) rather than exact string equality, so "Acme
+  Corp" vs. "Acme Corporation" *are* found as candidates for each other --
+  the LLM confirmation step below is still what decides whether to
+  actually merge them. The threshold (`entity_fuzzy_match_threshold`,
+  default 0.65) was corrected from an initial 0.82 guess after checking it
+  against real APOC: `sorensenDiceSimilarity('acme_corp',
+  'acme_corporation')` is 0.6956, so the original default wouldn't have
+  caught this pass's own motivating example. Real multi-candidate
+  disambiguation (more than one existing "confirmed different" entity
+  scoring above threshold) is still out of scope -- candidate lookup
+  returns at most the single best-scoring match per name.
 - **LLM confirmation before merging a name match, not merge-on-match.**
   Two exact-name matches across documents don't auto-merge -- one batched
   LLM call per parent chunk (not per entity) confirms or denies each
@@ -322,15 +328,14 @@ here so it doesn't repeat.
 
 ## What's still open
 
-- **Fuzzy/similarity-based entity matching** -- cross-document resolution
-  (exact-match candidates + LLM confirmation, see Trade-offs above) is
-  implemented and real-model verified both directions (a genuine
-  cross-document match merges correctly; two different people sharing a
-  name correctly stay separate -- see `PROGRESS.md`'s "Real-model
-  re-verification" section). Candidate lookup is still exact
-  normalized-name match only, though: "Acme Corp" vs. "Acme Corporation"
-  won't be found as candidates for each other; that needs
-  embedding-similarity or fuzzy string matching, not built here.
+- **Multi-candidate entity disambiguation** -- if more than one existing
+  entity scores above the similarity threshold for the same new mention,
+  only the single best-scoring one is considered; real disambiguation
+  across several plausible candidates isn't built. Everything else from
+  cross-document entity resolution (exact and fuzzy candidate matching,
+  LLM confirmation, see Trade-offs above) is implemented and real-model
+  verified in both directions -- see `PROGRESS.md`'s "Real-model
+  re-verification" and "Fuzzy/similarity-based entity matching" sections.
 - **LangSmith tracing** -- wired through env vars, unverified against a
   real LangSmith account (see above).
 - **Eval harness** -- small and hand-built (8 fixed Q/A pairs, substring

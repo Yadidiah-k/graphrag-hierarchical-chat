@@ -1,5 +1,41 @@
 # Progress (in-progress build, not final)
 
+## Fuzzy/similarity-based entity matching -- 2026-08-25
+
+Implements `docs/superpowers/specs/2026-08-25-fuzzy-entity-matching-design.md`,
+the last explicit scope boundary from cross-document entity resolution:
+candidate lookup was exact normalized-name match only, so "Acme Corp" and
+"Acme Corporation" were never even considered as candidates for each other.
+
+`Neo4jGraphStore.find_candidates_by_normalized_name` -> renamed
+`find_candidates_by_similarity(normalized_names, threshold)`, using APOC's
+`apoc.text.sorensenDiceSimilarity` (already enabled in this project's
+Neo4j) instead of exact equality. An exact match scores 1.0, so this
+subsumes the old behavior rather than adding a second code path.
+`EntityResolver`'s confirmation logic, LLM prompt, and safe-default
+parsing are all unchanged -- this only widens *candidate finding*; the LLM
+confirmation step is still what prevents false merges, regardless of how a
+candidate was found.
+
+**Real finding, not just a design assumption**: the initial
+`entity_fuzzy_match_threshold` default (0.82) was picked without checking
+it against real APOC. Verifying this against real Neo4j surfaced that
+`apoc.text.sorensenDiceSimilarity('acme_corp', 'acme_corporation')` is
+**0.6956** -- below 0.82, meaning the feature's own motivating example
+would not have actually worked with the original default. Corrected to
+**0.65**, confirmed via the same real-Neo4j check to actually catch that
+pair. Also confirmed via a real two-document ingest with a working
+OpenRouter key (no rate limit hit): "Acme Corp" and "Acme Corporation" in
+two separate documents, real Cypher afterward -- at the original 0.82
+default they stayed as two separate nodes; the corrected 0.65 default
+would surface them as a candidate pair for LLM confirmation.
+
+**Verified**: `pytest backend/tests/` -- 70 passed (16 in
+`test_entity_resolution.py`, including new above/below-threshold fuzzy
+cases). Real Neo4j check via both raw Cypher and the actual
+`find_candidates_by_similarity` method: exact-match sanity check ->
+similarity 1.0; unrelated pair -> no match, correctly below threshold.
+
 ## Real-model re-verification with a secondary OpenRouter key -- 2026-08-25
 
 Both real-model gaps left open by the previous two entries below (few-shot/
