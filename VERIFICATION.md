@@ -142,7 +142,7 @@ data: {"type":"done","data":null}
 
 ---
 
-## Summary
+## Summary (API-level tests)
 
 | # | Test case | Result |
 |---|-----------|--------|
@@ -157,9 +157,177 @@ or summary counts. This is the first proof the complete system — every
 piece built across the four prior specs — works correctly together against
 a real model, not only in isolation with mocks or against a fake key.
 
-Not yet covered by this pass (see `IMPROVEMENTS.md` / `PROGRESS.md` for
-status): the bounded retry-on-insufficient-context path (`grade_context`
-grading something insufficient and actually retrying) wasn't exercised
-here since the test document was small enough to be sufficient on the
-first pass; multi-turn conversation history resolution; LangSmith tracing
-(no LangSmith account available in this environment).
+---
+
+# Frontend: real browser testing
+
+Everything above was verified via `curl`/raw HTTP against the API
+directly. That's necessary but not sufficient — a curl script doesn't
+reproduce the frontend's own client-side logic (how it consumes the SSE
+stream, what it does with each event, how widgets commit state). This
+section covers driving the **actual Streamlit UI** in a real browser
+(Playwright + headless system Chrome — no extra browser download needed,
+the system already had `google-chrome`), clicking buttons and reading
+rendered output, not calling the API directly.
+
+Two real, reproducible bugs were found this way that no API-level test
+had caught — see each test case below for exactly how.
+
+## Test case 4: Frontend — full chat flow (ingest, citations, rationale, graph)
+
+**Input**: pasted the Acme Corp/Startup Inc text into the sidebar's
+"...or paste text" box, filled Document ID/Title, clicked **Ingest**;
+then asked "Who acquired Startup Inc and how much did it cost?" via the
+chat input.
+
+**Checks performed**:
+- Ingest form: Streamlit's `text_area` requires **Ctrl+Enter** (or a
+  blur) to commit a pending edit — confirmed via screenshot showing a red
+  border + "Ctrl+Enter to apply" hint; the Ingest button stays disabled
+  until that happens. Real, minor UX rough edge (not a bug) — easy to
+  trip over since nothing else on the page explains it.
+- Ingest result rendered: "Ingested: 1 parent chunks, 1 child chunks, 3
+  entities, 3 relationships."
+- Chat answer rendered correctly via `st.write_stream`: "Acme Corp
+  acquired Startup Inc for $50 million."
+- Citations rendered as 3 expandable cards; expanding one showed the full
+  correct parent-chunk text.
+- **Bug found**: "Why this answer" (the rationale section) never
+  rendered, for this or any query — `frontend/app.py`'s SSE consumer
+  `break`d its read loop on the `"done"` event, but the backend sends
+  `"rationale"` *after* `"done"` (it needs the finished answer text
+  first). The frontend silently discarded every rationale the backend
+  ever sent. No prior verification pass caught this because every one of
+  them read the raw SSE stream directly (`curl`/`requests` without the
+  frontend's early-exit logic) — only driving the actual frontend code
+  path surfaces this class of bug.
+  **Fixed**: removed the `break` (commit `7f734c5`). Reloaded in the
+  browser afterward and confirmed "Why this answer" now renders with
+  accurate content, correctly citing the actual supporting chunk ids and
+  the actual graph relationship used.
+- Pyvis graph rendered as a real interactive node/edge visualization
+  inside its iframe (not an empty container) — confirmed both
+  programmatically (`iframe` element present) and visually (circles,
+  labeled edges, entity-id labels all visible).
+
+**Status: PASS (after fix)**
+
+## Test case 5: Frontend — gibberish rejection
+
+**Input**: chat query `"asdkjf qwoeiru zzz blorp"`.
+
+**Checks performed**: rendered response was the friendly clarification
+message; the page explicitly showed "No citations retrieved for this
+answer." / "No rationale available for this answer." / "Nothing to
+show." for the graph section — a clean, legible empty state, not a blank
+or broken-looking section.
+
+**Status: PASS**
+
+## Test case 6: Frontend — Graph Explorer tab
+
+**Input**: switched to the "Graph Explorer" tab, entered "Acme Corp",
+clicked **Explore**.
+
+**Checks performed**: returned "3 nodes, 5 edges" and rendered the same
+Pyvis visualization component, working independently of any chat turn.
+
+**Status: PASS**
+
+## Test case 7: Frontend — file upload + multi-turn conversation history
+
+**Input**: uploaded a `.txt` file (Meridian Logistics/RouteWise Analytics
+acquisition text) via the sidebar's file uploader — not the paste-text
+box, a different code path. Then asked two chat turns in sequence: "Who
+acquired RouteWise Analytics and how much did it cost?" (turn 1), then
+"Who led that acquisition?" (turn 2, deliberately using a pronoun with no
+antecedent unless conversation history is actually used).
+
+**Checks performed**:
+- File upload ingest succeeded: "Ingested: 1 parent chunks, 1 child
+  chunks, 3 entities, 6 relationships."
+- Turn 1 answered correctly: "Meridian Logistics acquired RouteWise
+  Analytics for $22 million."
+- Turn 2 correctly resolved "that acquisition" via `validate_query`'s
+  history-aware query rewriting: "The acquisition was led by Priya Nair,
+  Meridian Logistics' CEO (who finalized the deal and has headed the
+  company since 2021)." — the first real-model confirmation that
+  multi-turn conversation history and query rewriting work end-to-end
+  through the actual UI, not just in isolated unit tests of the parsing
+  logic.
+
+**Status: PASS**
+
+## Test case 8: Frontend — `document_id` filter
+
+**Input**: set the sidebar's "Filter chat by document_id" field to a
+nonexistent document id, then re-asked a question already answered in
+test case 7's turn 1.
+
+**Checks performed**: response correctly showed "No citations retrieved
+for this answer." — the filter genuinely restricted vector search to zero
+results (not silently ignored). The model still produced a correct
+answer, and the rationale **honestly disclosed why**: "The answer was
+generated from internal knowledge without referencing any retrieved
+citations or graph relationships, as none were provided." This is
+correct, disclosed behavior, not a bug — conversation history is a
+legitimate generation input by design; the rationale mechanism correctly
+flagged that this particular answer wasn't grounded in retrieval, rather
+than claiming citations that didn't exist.
+
+**Status: PASS**
+
+## Test case 9: Frontend — `content_type` filter
+
+**Input**: with the `document_id` filter reset to the correct document
+(entirely prose, no tables), set "Content type filter" to `prose`, asked
+a question — then repeated with the filter set to `table`.
+
+**Checks performed**:
+- `content_type=prose`: citations returned, question answered correctly
+  ("RouteWise Analytics specializes in route-optimization software.").
+- `content_type=table`: zero citations returned, correctly ("the
+  available information does not provide details..." — the document has
+  no table content, so nothing should match). Proves the filter
+  genuinely restricts retrieval by content type.
+- **Second bug found**, organically, while this test happened to hit
+  OpenRouter's exhausted daily quota mid-run: the `table`-filtered
+  answer text had a raw exception repr appended directly to it —
+  `Error: Error code: 429 - {'error': {'message': 'Rate limit
+  exceeded...` — the full Python dict, dumped into the chat bubble right
+  after an already-correct, already-complete answer. Root cause:
+  `chat.py`'s single outer `try/except` treated a failure in
+  `generate_rationale` (called after the answer already streamed
+  successfully) the same as any other failure, yielding a chat `"error"`
+  event that the frontend renders inline. **Fixed** (commit `cbe7a9b`):
+  `generate_rationale` + the `query_logs` write now have their own inner
+  `try/except` — on failure, log and silently skip rather than surface a
+  user-facing error, since the answer itself already succeeded by that
+  point. `pytest backend/tests/` still 70/70 after the fix.
+
+**Status: PASS (content_type filtering itself); bug found and fixed
+(error handling)**
+
+## Frontend summary
+
+| # | Test case | Result |
+|---|-----------|--------|
+| 4 | Full chat flow: ingest, citations, rationale, graph render | PASS (after fixing the rationale-discard bug) |
+| 5 | Gibberish rejection, clean empty state | PASS |
+| 6 | Graph Explorer tab | PASS |
+| 7 | File upload ingest + multi-turn history/query rewriting | PASS |
+| 8 | `document_id` filter (correctly empty + honest rationale) | PASS |
+| 9 | `content_type` filter (prose match, table correctly no-match) | PASS (after fixing the rationale-error-leak bug) |
+
+Two real bugs found and fixed, both invisible to every prior
+API-level/curl-based verification pass because they lived specifically in
+the frontend's own SSE-consumption and error-rendering logic, not the
+API's behavior.
+
+**Not yet covered**: the bounded retry-on-insufficient-context loop
+(`grade_context` grading something insufficient and actually retrying)
+still hasn't fired against a real model — a query designed to trigger it
+was queued but OpenRouter's daily quota exhausted before it ran (see
+`PROGRESS.md`). Also not covered: LangSmith tracing (no account
+available), and multi-candidate entity disambiguation (explicitly out of
+scope, see `README.md`).
