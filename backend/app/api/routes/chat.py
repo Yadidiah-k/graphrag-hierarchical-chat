@@ -47,7 +47,13 @@ async def chat(
         started_at = time.perf_counter()
         try:
             result = await asyncio.to_thread(
-                pipeline.answer_stream, payload.query, payload.document_id, payload.top_k, payload.history
+                pipeline.answer_stream,
+                payload.query,
+                payload.document_id,
+                payload.top_k,
+                payload.history,
+                payload.section_title_filter,
+                payload.content_type_filter,
             )
             yield _sse(ChatStreamEvent(type=ChatEventType.citations, data=result.citations))
             yield _sse(ChatStreamEvent(type=ChatEventType.triples, data=result.triples))

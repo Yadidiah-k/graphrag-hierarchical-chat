@@ -158,6 +158,8 @@ class RagState(TypedDict, total=False):
     query: str
     history: list[ChatMessage]
     document_id: str | None
+    section_title_filter: str | None
+    content_type_filter: str | None
     top_k: int
     hop_depth: int
     retry_count: int
@@ -248,6 +250,8 @@ class GraphRagPipeline:
             query_vector=query_vector,
             top_k=state.get("top_k") or self._settings.top_k_vector,
             document_id=state.get("document_id"),
+            section_title=state.get("section_title_filter"),
+            content_type=state.get("content_type_filter"),
         )
         return {"vector_hits": hits}
 
@@ -518,11 +522,15 @@ class GraphRagPipeline:
         document_id: str | None = None,
         top_k: int | None = None,
         history: list[ChatMessage] | None = None,
+        section_title_filter: str | None = None,
+        content_type_filter: str | None = None,
     ) -> RagState:
         """Non-streaming entry point -- runs the full compiled graph and returns final state."""
         initial: RagState = {
             "query": query,
             "document_id": document_id,
+            "section_title_filter": section_title_filter,
+            "content_type_filter": content_type_filter,
             "top_k": top_k or self._settings.top_k_vector,
             "hop_depth": self._settings.graph_hop_depth,
             "retry_count": 0,
@@ -536,6 +544,8 @@ class GraphRagPipeline:
         document_id: str | None = None,
         top_k: int | None = None,
         history: list[ChatMessage] | None = None,
+        section_title_filter: str | None = None,
+        content_type_filter: str | None = None,
     ) -> StreamResult:
         """Manually chains the same nodes the compiled graph uses, up through
         grade_context (bounded retry as a plain Python loop), then returns a
@@ -546,6 +556,8 @@ class GraphRagPipeline:
         state: RagState = {
             "query": query,
             "document_id": document_id,
+            "section_title_filter": section_title_filter,
+            "content_type_filter": content_type_filter,
             "top_k": top_k or self._settings.top_k_vector,
             "hop_depth": self._settings.graph_hop_depth,
             "retry_count": 0,
