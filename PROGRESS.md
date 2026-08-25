@@ -127,7 +127,7 @@ unexplained rather than either dismissed or over-investigated.
 
 ## Fuzzy/similarity-based entity matching -- 2026-08-25
 
-Implements `docs/superpowers/specs/2026-08-25-fuzzy-entity-matching-design.md`,
+Implements `docs/specs/2026-08-25-fuzzy-entity-matching-design.md`,
 the last explicit scope boundary from cross-document entity resolution:
 candidate lookup was exact normalized-name match only, so "Acme Corp" and
 "Acme Corporation" were never even considered as candidates for each other.
@@ -209,7 +209,7 @@ re-running the full original test suite against the new key.
 
 ## Cross-document entity resolution -- 2026-08-25
 
-Implements `docs/superpowers/specs/2026-08-25-cross-document-entity-resolution-design.md`.
+Implements `docs/specs/2026-08-25-cross-document-entity-resolution-design.md`.
 `IMPROVEMENTS.md`'s last open item: graph node ids were namespaced per
 document (`f"{document_id}:{name}"`), so "Acme Corp" in two different
 ingested documents became two disconnected Neo4j nodes.
@@ -305,7 +305,7 @@ actually implemented and what's still genuinely open.
 
 ## Few-shot + CoT graph extraction -- 2026-08-25
 
-Implements `docs/superpowers/specs/2026-08-25-fewshot-cot-extraction-design.md`.
+Implements `docs/specs/2026-08-25-fewshot-cot-extraction-design.md`.
 `EXTRACTION_PROMPT` (`app/graph/extraction.py`) now asks for a `reasoning`
 field first (chain-of-thought, embedded in the same JSON call, not a second
 one) and includes two hand-written, in-domain few-shot examples: one rich
@@ -336,7 +336,7 @@ practice, does reasoning improve relationship accuracy -- is unverified
 until the quota resets and this can be re-run.
 
 ## Tests, evals, LangSmith tracing, README -- 2026-08-25
-Implements `docs/superpowers/specs/2026-08-25-tests-evals-tracing-docs-design.md`.
+Implements `docs/specs/2026-08-25-tests-evals-tracing-docs-design.md`.
 The last four pieces from `IMPROVEMENTS.md`'s "still outstanding" list, none
 of which involved a real architectural decision.
 
@@ -517,7 +517,7 @@ not just in isolation with mocks.
 - `.env.example` - documents required env vars
 
 ## Postgres migration (replaces Qdrant + SQLite) -- verified 2026-08-25
-Implements `docs/superpowers/specs/2026-08-25-postgres-migration-design.md`:
+Implements `docs/specs/2026-08-25-postgres-migration-design.md`:
 one Postgres instance (pgvector + JSONB) now backs child-chunk vectors,
 parent chunks, documents, and a new `query_logs` audit table. Neo4j
 untouched.
@@ -622,7 +622,7 @@ two changes there turned out to be unavoidable:
   OpenAI/Qdrant/Neo4j (needs API key + docker-compose).
 
 ## Agentic RAG pipeline (query validation, grading, rationale) -- verified 2026-08-25
-Implements `docs/superpowers/specs/2026-08-25-agentic-rag-pipeline-design.md`:
+Implements `docs/specs/2026-08-25-agentic-rag-pipeline-design.md`:
 `app/rag/pipeline.py` is now a real branching/cyclic LangGraph --
 `validate_query` (structured: gibberish/tone/verbosity/history-resolved
 rewritten_query) short-circuits to `reject_response` on gibberish, otherwise
@@ -711,7 +711,7 @@ migration's `pipeline.py` extension noted above -- flagging it explicitly
 since it's outside the spec's listed file scope.
 
 ## Chunker enrichment: section/content-type classification + retrieval filters -- verified 2026-08-25
-Implements `docs/superpowers/specs/2026-08-25-chunker-enrichment-design.md`:
+Implements `docs/specs/2026-08-25-chunker-enrichment-design.md`:
 `GraphExtractor.extract()`'s existing per-parent LLM call now also returns
 `section_title`/`content_type` (`prose`/`table`/`list`/`other`), folded into
 the same JSON response rather than a second call. `ingestion.py` keeps its

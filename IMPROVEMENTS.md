@@ -69,7 +69,7 @@ alone did nothing until it was also added there.
   that actually runs against the live stack (`backend/evals/`), LangSmith env
   vars wired through (unverified against a real account), and a real
   README -- all implemented in
-  `docs/superpowers/specs/2026-08-25-tests-evals-tracing-docs-design.md`
+  `docs/specs/2026-08-25-tests-evals-tracing-docs-design.md`
 
 ## Priority 1 -- biggest grading impact, fixes the "why LangGraph" gap
 
@@ -77,7 +77,7 @@ alone did nothing until it was also added there.
       (structured LLM call): `is_gibberish`, `tone`, `verbosity_preference`,
       plus a history-aware `rewritten_query` (query rewriting was folded in
       here, as discussed) and `suggested_reply` for the reject path.
-      Implemented in `docs/superpowers/specs/2026-08-25-agentic-rag-pipeline-design.md`.
+      Implemented in `docs/specs/2026-08-25-agentic-rag-pipeline-design.md`.
   - [x] Conditional edge: gibberish -> `reject_response` node, skips
         retrieval entirely (real `add_conditional_edges`, verified via the
         compiled graph's mermaid output showing genuine branching, not a
@@ -116,7 +116,7 @@ alone did nothing until it was also added there.
 ## Priority 2 -- architecture quality, one clean unit of work
 
 - [x] **Migrate Qdrant + SQLite -> Postgres (pgvector + JSONB)** --
-      implemented in `docs/superpowers/specs/2026-08-25-postgres-migration-design.md`
+      implemented in `docs/specs/2026-08-25-postgres-migration-design.md`
   - [x] Single Postgres instance: `child_chunks` (pgvector, HNSW index),
         `parent_chunks` + `documents` (JSONB metadata column, GIN indexed),
         plus a new `query_logs` audit table that wasn't in the original scope
@@ -125,7 +125,7 @@ alone did nothing until it was also added there.
   - [x] Document the trade-off in the README -- now written up in
         `README.md`'s Trade-offs section (pgvector vs. a dedicated vector DB)
 - [x] **Chunker enrichment** (structure-aware, more metadata/filters) --
-      implemented in `docs/superpowers/specs/2026-08-25-chunker-enrichment-design.md`.
+      implemented in `docs/specs/2026-08-25-chunker-enrichment-design.md`.
       `hierarchical_chunker.py` itself stays unchanged (pure, dependency-free);
       classification folded into the existing per-parent extraction call.
   - [x] Section/heading detection -- **real-model verified**: the test
@@ -166,7 +166,7 @@ alone did nothing until it was also added there.
 
 - [x] **Hand-written few-shot + explicit CoT** in the graph extraction
       prompt (`app/graph/extraction.py`) -- implemented in
-      `docs/superpowers/specs/2026-08-25-fewshot-cot-extraction-design.md`.
+      `docs/specs/2026-08-25-fewshot-cot-extraction-design.md`.
       Researched whether an existing labeled dataset (DocRED, REBEL) could
       bootstrap DSPy few-shot examples instead of hand-writing them: both
       use a fixed, closed relation taxonomy (Wikidata-style: "spouse",
@@ -196,7 +196,7 @@ alone did nothing until it was also added there.
 ## Cross-document entity resolution
 
 - [x] Graph node ids are no longer namespaced per document. Implemented in
-      `docs/superpowers/specs/2026-08-25-cross-document-entity-resolution-design.md`:
+      `docs/specs/2026-08-25-cross-document-entity-resolution-design.md`:
       `GraphExtractor._parse` now generates a provisional
       `{normalized_name}:{random_suffix}` id; `EntityResolver`
       (`app/graph/entity_resolution.py`) looks up existing normalized-name
