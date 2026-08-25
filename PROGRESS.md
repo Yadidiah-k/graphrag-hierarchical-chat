@@ -1,5 +1,37 @@
 # Progress (in-progress build, not final)
 
+## Few-shot + CoT graph extraction -- 2026-08-25
+
+Implements `docs/superpowers/specs/2026-08-25-fewshot-cot-extraction-design.md`.
+`EXTRACTION_PROMPT` (`app/graph/extraction.py`) now asks for a `reasoning`
+field first (chain-of-thought, embedded in the same JSON call, not a second
+one) and includes two hand-written, in-domain few-shot examples: one rich
+extraction, one deliberately weak-signal example demonstrating restraint
+(no entities/relationships forced when the text doesn't support them). No
+code changes to `_parse` -- it already ignores unrecognized JSON keys, so
+`reasoning` needs no new handling; confirmed by re-running the existing
+suite unchanged.
+
+**Verified**: `pytest backend/tests/test_extraction_parsing.py` -- 18
+passed, unchanged, confirming the `_parse` compatibility claim rather than
+just asserting it.
+
+**Not verified this pass**: actual output-quality improvement from the new
+prompt against a real model. Brought up the live stack and attempted two
+targeted ingests (a rich-signal test and a weak-signal restraint test) --
+both got through chunking and embedding successfully (parent/child chunks
+landed in Postgres, confirmed via SQL), but both failed at the extraction
+LLM call with `openai.RateLimitError: 429`
+(`limit_source: openrouter_free_tier_daily`, `X-RateLimit-Remaining: 0`) --
+the same account-wide daily quota already exhausted by today's earlier
+eval harness runs. Quota resets at `X-RateLimit-Reset` = 2026-08-26 00:00
+UTC. This is an honest gap, not glossed over: the prompt change is
+structurally sound (existing tests pass, pipeline mechanics work end to
+end up to the LLM call) but its actual effect on extraction quality --
+does the weak-signal example actually prevent hallucinated entities in
+practice, does reasoning improve relationship accuracy -- is unverified
+until the quota resets and this can be re-run.
+
 ## Tests, evals, LangSmith tracing, README -- 2026-08-25
 Implements `docs/superpowers/specs/2026-08-25-tests-evals-tracing-docs-design.md`.
 The last four pieces from `IMPROVEMENTS.md`'s "still outstanding" list, none
