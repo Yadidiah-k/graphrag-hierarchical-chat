@@ -23,13 +23,18 @@ Rules:
 - relation_type must be an UPPER_SNAKE_CASE verb phrase (e.g. ACQUIRED, PARTNERED_WITH, EMPLOYS).
 - Every relationship must include a short "evidence" string quoting or closely
   paraphrasing the supporting text.
+- Also classify the passage itself: a short human-readable section_title
+  (e.g. "Q3 Revenue", "Executive Summary"; null if none is apparent), and a
+  content_type of exactly one of "prose", "table", "list", "other".
 
 Return ONLY valid JSON matching this shape, with no extra commentary:
 {{
   "nodes": [{{"name": "...", "type": "..."}}],
   "relationships": [
     {{"source": "...", "target": "...", "relation_type": "...", "evidence": "..."}}
-  ]
+  ],
+  "section_title": "..." or null,
+  "content_type": "prose" or "table" or "list" or "other"
 }}
 
 Text:
@@ -62,7 +67,7 @@ class GraphExtractor:
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
-            return ExtractionResult(nodes=[], relationships=[])
+            return ExtractionResult(nodes=[], relationships=[], section_title=None, content_type="prose")
 
         name_to_id: dict[str, str] = {}
         nodes: list[GraphNode] = []
@@ -107,7 +112,18 @@ class GraphExtractor:
                 )
             )
 
-        return ExtractionResult(nodes=nodes, relationships=relationships)
+        section_title_raw = payload.get("section_title")
+        section_title = str(section_title_raw).strip() if section_title_raw else None
+
+        content_type_raw = str(payload.get("content_type", "")).strip().lower()
+        content_type = content_type_raw if content_type_raw in ("prose", "table", "list", "other") else "prose"
+
+        return ExtractionResult(
+            nodes=nodes,
+            relationships=relationships,
+            section_title=section_title,
+            content_type=content_type,
+        )
 
 
 def build_graph_extractor(settings: Settings) -> GraphExtractor:
