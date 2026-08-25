@@ -179,5 +179,3 @@ Modified: `backend/requirements.txt` (add `pytest`), `.env.example`,
 3. LangSmith env var plumbing (`.env.example` + `docker-compose.yml`)
 4. `README.md`
 5. `PROGRESS.md` update
-
-No Claude co-author trailer on any commit.

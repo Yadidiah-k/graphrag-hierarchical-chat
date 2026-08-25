@@ -12,8 +12,7 @@ types, and are Wikipedia-domain rather than business-document domain --
 see the Priority 4 entry for the full finding). Hand-written examples were
 needed either way, so this skips DSPy's compile-step machinery entirely.
 
-Small, contained, single-file change -- implementing directly rather than
-via subagent dispatch given the scope.
+Small, contained, single-file change.
 
 ## Design
 
@@ -85,5 +84,3 @@ signature/logic changes).
 
 One commit: the prompt change, described precisely (what changed and why,
 not just "improved prompt").
-
-No Claude co-author trailer.

@@ -210,6 +210,3 @@ Same layered style as the rest of this repo's history -- roughly:
 6. `main.py` wiring + `requirements.txt`
 7. `docker-compose.yml` + `.env.example`
 8. `PROGRESS.md` update with verification results
-
-No Claude co-author trailer on any commit (established convention for this
-repo -- see earlier history).

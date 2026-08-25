@@ -204,5 +204,3 @@ What to verify regardless of quota:
 3. `entity_resolution.py` (new module)
 4. `ingestion.py` + `main.py` wiring
 5. `PROGRESS.md` update
-
-No Claude co-author trailer on any commit.

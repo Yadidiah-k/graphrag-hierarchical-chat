@@ -247,5 +247,3 @@ rather than overclaiming. What can actually be verified:
 5. `frontend/app.py` (history send, rationale render)
 6. `PROGRESS.md` update with verification results and the untested-behavior
    caveat
-
-No Claude co-author trailer on any commit.

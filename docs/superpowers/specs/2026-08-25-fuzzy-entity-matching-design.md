@@ -110,5 +110,3 @@ fake graph store / existing tests to cover a fuzzy-match case).
 2. `neo4j_client.py` fuzzy candidate query
 3. `entity_resolution.py` wiring + test updates
 4. `PROGRESS.md` / `IMPROVEMENTS.md` / `README.md` updates
-
-No Claude co-author trailer on any commit.

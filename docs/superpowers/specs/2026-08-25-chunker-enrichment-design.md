@@ -235,5 +235,3 @@ covers it:
 5. `rag/pipeline.py` + `api/routes/chat.py` filter threading
 6. `frontend/app.py` filter controls
 7. `PROGRESS.md` update
-
-No Claude co-author trailer on any commit.
