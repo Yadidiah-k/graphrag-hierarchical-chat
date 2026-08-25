@@ -118,6 +118,7 @@ class CitationTriple(BaseModel):
 class ChatEventType(str, Enum):
     token = "token"
     citations = "citations"
+    triples = "triples"
     done = "done"
     error = "error"
 
