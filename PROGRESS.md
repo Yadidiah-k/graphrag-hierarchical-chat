@@ -1,5 +1,66 @@
 # Progress (in-progress build, not final)
 
+## Frontend: real browser testing -- 2026-08-25
+
+Every prior verification of the frontend was either HTTP-level (curl
+against the Streamlit health endpoint) or backend-only (the API tested
+directly). This is the first pass that actually drove the UI in a real
+browser (Playwright + headless system Chrome, no extra browser download
+needed) -- clicking buttons, filling forms, reading rendered content,
+screenshotting each step.
+
+**Real bug found and fixed**: `frontend/app.py`'s SSE consumer
+(`stream_chat`'s `token_gen()`) `break`d out of its read loop the moment it
+saw the `"done"` event. But `chat.py` sends `"rationale"` *after*
+`"done"` (it needs the complete answer text first, which only exists once
+generation finishes). This meant the frontend silently discarded every
+rationale the backend ever sent -- "Why this answer" never rendered,
+regardless of query. This was never caught by any prior verification
+pass because every one of them used raw `curl` or `requests` against the
+SSE stream directly, which just print everything without implementing the
+frontend's specific early-exit logic -- only driving the actual frontend
+code path surfaces this class of bug. Fixed by removing the `break`
+(letting the loop run until the server actually closes the connection);
+confirmed via a real browser reload that "Why this answer" now renders
+with accurate content.
+
+**Related fix, same session**: while chasing an unrelated 120s hang during
+a later run (see below), noticed the frontend's chat request `timeout=120`
+is tight against the agentic pipeline's real cost -- up to 4 sequential
+LLM calls (validate/grade/generate/rationale) plus a possible bounded
+retry round, which can approach 120s on a free-tier model on its own.
+Bumped to 240s for margin. Not itself confirmed as the fix for the hang
+below (that looked like a one-off slow response, not a deterministic
+timeout-margin issue), but a reasonable safety margin regardless.
+
+**Verified working, screenshotted, real interaction**: ingest form
+(document ID/title/paste-text -- note: Streamlit's `text_area` requires
+Ctrl+Enter or a blur to commit a pending edit, or the Ingest button stays
+disabled with no visible reason -- a minor real UX rough edge, not a bug),
+a real chat turn (citations rendered as expandable cards with full parent
+text, rationale rendered with accurate chunk/relationship references,
+Acme Corp / Startup Inc example answered correctly), the Pyvis graph
+rendering as an actual interactive node/edge visualization inside its
+iframe (not just an empty container), gibberish rejection (correct empty
+citations/rationale/graph state with clear "nothing to show" messaging,
+not a blank or broken section), and the Graph Explorer tab (entity search
+returning "3 nodes, 5 edges" with the same graph rendering working there
+too).
+
+**Minor cosmetic finding, not fixed**: with several relationships between
+two nearby nodes, the Pyvis graph's edge labels overlap and become hard to
+read (visible in the Graph Explorer screenshot -- multiple relation-type
+labels crowded between the same two circles). Real UX rough edge, low
+priority, not addressed in this pass.
+
+**One unexplained flake**: a later run (same code, only a browser viewport
+size change) hung for 120s+ on the same chat call and hit a client-side
+`ReadTimeoutError`, despite the API logs showing the request had already
+returned 200 server-side. Did not reproduce this deterministically or dig
+further given it didn't recur and the underlying rationale fix was already
+independently confirmed working in the run before it -- noted honestly as
+unexplained rather than either dismissed or over-investigated.
+
 ## Fuzzy/similarity-based entity matching -- 2026-08-25
 
 Implements `docs/superpowers/specs/2026-08-25-fuzzy-entity-matching-design.md`,
