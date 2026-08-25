@@ -2,11 +2,13 @@
 + graph store, with provenance preserved end-to-end.
 
 Flow:
+    (document_id, title)
+    -> ParentChunkStore.save_document  (documents row)
     text
     -> HierarchicalChunker            (parents + children)
     -> ParentChunkStore.save_many      (durable parent context)
     -> EmbeddingProvider.embed_texts   (child chunk vectors)
-    -> QdrantVectorStore.upsert_children
+    -> PostgresVectorStore.upsert_children
     -> GraphExtractor.extract (per parent, using its child ids as provenance)
     -> Neo4jGraphStore.write_extraction
 """
@@ -21,7 +23,7 @@ from app.graph.neo4j_client import Neo4jGraphStore
 from app.schemas.models import ExtractionResult, IngestResponse, IngestJobStatus
 from app.services.embeddings import EmbeddingProvider
 from app.services.parent_store import ParentChunkStore
-from app.vectorstore.qdrant_store import QdrantVectorStore
+from app.vectorstore.postgres_store import PostgresVectorStore
 
 logger = logging.getLogger("graphrag.ingestion")
 
@@ -31,7 +33,7 @@ class IngestionService:
         self,
         chunker: HierarchicalChunker,
         embedding_provider: EmbeddingProvider,
-        vector_store: QdrantVectorStore,
+        vector_store: PostgresVectorStore,
         parent_store: ParentChunkStore,
         graph_extractor: GraphExtractor,
         graph_store: Neo4jGraphStore,
@@ -43,7 +45,9 @@ class IngestionService:
         self._extractor = graph_extractor
         self._graph = graph_store
 
-    def ingest(self, document_id: str, text: str) -> IngestResponse:
+    def ingest(self, document_id: str, title: str, text: str) -> IngestResponse:
+        self._parents.save_document(document_id, title)
+
         chunk_result = self._chunker.chunk_document(document_id, text)
         logger.info(
             "chunked document",
@@ -64,6 +68,9 @@ class IngestionService:
                     "parent_id": c.parent_id,
                     "document_id": c.document_id,
                     "text": c.text,
+                    "start_char": c.start_char,
+                    "end_char": c.end_char,
+                    "chunk_order": c.order,
                 }
                 for c in chunk_result.children
             ]

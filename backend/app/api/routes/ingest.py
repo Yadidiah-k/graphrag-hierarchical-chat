@@ -25,11 +25,12 @@ def _run_ingestion(
     ingestion_service: IngestionService,
     jobs: dict[str, IngestResponse],
     document_id: str,
+    title: str,
     text: str,
 ) -> None:
     jobs[document_id] = IngestResponse(document_id=document_id, status=IngestJobStatus.running)
     try:
-        jobs[document_id] = ingestion_service.ingest(document_id, text)
+        jobs[document_id] = ingestion_service.ingest(document_id, title, text)
     except Exception:
         logger.exception("ingestion failed", extra={"document_id": document_id})
         jobs[document_id] = IngestResponse(document_id=document_id, status=IngestJobStatus.failed)
@@ -47,7 +48,9 @@ async def ingest_document(
 
     jobs: dict[str, IngestResponse] = request.app.state.ingest_jobs
     jobs[payload.document_id] = IngestResponse(document_id=payload.document_id, status=IngestJobStatus.queued)
-    background_tasks.add_task(_run_ingestion, ingestion_service, jobs, payload.document_id, payload.text)
+    background_tasks.add_task(
+        _run_ingestion, ingestion_service, jobs, payload.document_id, payload.title, payload.text
+    )
     return jobs[payload.document_id]
 
 
