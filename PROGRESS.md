@@ -1,5 +1,69 @@
 # Progress (in-progress build, not final)
 
+## Frontend: comprehensive end-to-end browser testing, part 2 -- 2026-08-25
+
+Follow-up to the first browser-testing pass (below), covering everything
+that pass didn't reach: file upload (vs. paste-text), multi-turn
+conversation history, the `document_id`/`content_type` filters actually
+being used with a real filtered `/chat` call, and a query designed to
+probe the bounded retry loop.
+
+**Confirmed working, for real, via actual UI interaction:**
+- **File upload ingest**: uploaded a `.txt` file through the sidebar's
+  file uploader (not the paste-text box) -- ingested correctly (1 parent,
+  1 child, 3-4 entities depending on run, several relationships).
+- **Multi-turn history + query rewriting**: asked "Who acquired RouteWise
+  Analytics and how much did it cost?" (turn 1, answered correctly), then
+  the follow-up "Who led that acquisition?" (turn 2) -- correctly resolved
+  "that" via `validate_query`'s history-aware rewriting to answer about
+  Priya Nair, the actual CEO who led it. This is the first real-model
+  confirmation that conversation history and query rewriting work
+  end-to-end through the actual UI, not just in isolation.
+- **`document_id` filter**: set to a nonexistent document, asked a
+  question already answered in turn 1 -- correctly returned zero
+  citations, and the rationale *honestly disclosed* "The answer was
+  generated from internal knowledge without referencing any retrieved
+  citations or graph relationships, as none were provided" rather than
+  silently passing off conversation-history recall as grounded fact. Not
+  a bug: the filter correctly restricted retrieval; the model still had
+  legitimate access to conversation history as generation context, and
+  said so.
+- **`content_type` filter**: set to `prose` on a document that's entirely
+  prose -- citations correctly returned, question answered correctly. Set
+  to `table` on the same (prose-only) document -- correctly returned zero
+  citations ("the available information does not provide details...").
+  Proves the filter is genuinely restricting retrieval, not just being
+  silently ignored.
+
+**Real bug found and fixed**: while the `content_type=table` test was
+running, it organically hit OpenRouter's exhausted daily rate limit
+during the *rationale* generation call specifically (the answer itself
+had already generated successfully). The raw exception text --
+`Error: Error code: 429 - {'error': {'message': 'Rate limit exceeded...`,
+the full Python dict repr -- got appended directly onto the
+already-correct, already-streamed answer, making a working turn look
+broken. Root cause: `chat.py`'s single outer `try/except` treated a
+rationale-generation failure the same as a failure anywhere else in the
+request, yielding a chat `"error"` event that the frontend renders inline
+in the answer bubble. Fixed by wrapping `generate_rationale` + the
+`query_logs` write in their own inner `try/except`: on failure, log and
+silently skip (no `rationale` event, no log row) rather than surface a
+user-facing error -- by the point that code runs, the answer has already
+streamed successfully, so a rationale-specific failure shouldn't
+retroactively make the turn look broken. `pytest backend/tests/` still
+70/70 after the fix (no unit tests cover this SSE-error-handling path
+directly, but nothing else regressed).
+
+**Not verified this pass**: the bounded retry-on-insufficient-context
+loop specifically. The out-of-scope test query ("What is Meridian
+Logistics' stock ticker symbol on the NYSE?") was queued to probe it, but
+by the time it ran, OpenRouter's daily quota was fully exhausted on this
+key too (confirmed `X-RateLimit-Remaining: 0`, same reset timestamp as
+the original key) -- the request failed at `validate_query`, the very
+first LLM call, before ever reaching `grade_context`. This is the one
+piece of the agentic pipeline that has still never fired against a real
+model. Re-run after the next quota reset.
+
 ## Frontend: real browser testing -- 2026-08-25
 
 Every prior verification of the frontend was either HTTP-level (curl
