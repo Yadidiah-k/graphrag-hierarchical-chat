@@ -11,6 +11,12 @@ Flow:
     -> PostgresVectorStore.upsert_children
     -> GraphExtractor.extract (per parent, using its child ids as provenance)
     -> Neo4jGraphStore.write_extraction
+    -> ParentChunkStore.update_metadata / PostgresVectorStore.update_children_metadata
+
+The metadata backfill happens last, as a follow-up UPDATE, rather than being
+folded into the initial parent/child INSERTs above: extraction is the most
+failure-prone step (external LLM call), and this ordering means an
+extraction failure still leaves chunks and vectors durably saved.
 """
 
 from __future__ import annotations
@@ -98,6 +104,11 @@ class IngestionService:
                 self._graph.write_extraction(extraction)
                 total_nodes += len(extraction.nodes)
                 total_relationships += len(extraction.relationships)
+
+            metadata = {"section_title": extraction.section_title, "content_type": extraction.content_type}
+            self._parents.update_metadata(parent.parent_id, metadata)
+            if child_ids:
+                self._vectors.update_children_metadata(child_ids, metadata)
 
         logger.info(
             "graph extraction complete",
